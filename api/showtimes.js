@@ -119,8 +119,7 @@ module.exports = async (req, res) => {
     const serpRes = await axios.get('https://serpapi.com/search', {
       params: {
         engine: 'google',
-        q: 'showtimes',
-        location,
+        q: `movie showtimes near ${location}`,
         hl: 'en',
         gl: 'us',
         api_key: process.env.SERPAPI_KEY,
