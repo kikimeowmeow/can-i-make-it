@@ -1,7 +1,13 @@
 {
-  "rewrites": [
-    { "source": "/api/showtimes", "destination": "/api/showtimes.js" },
-    { "source": "/api/geocode",   "destination": "/api/geocode.js"   },
-    { "source": "/api/transit",   "destination": "/api/transit.js"   }
+  "version": 2,
+  "builds": [
+    { "src": "index.html",   "use": "@vercel/static" },
+    { "src": "api/*.js",     "use": "@vercel/node"   }
+  ],
+  "routes": [
+    { "src": "/api/showtimes", "dest": "/api/showtimes.js" },
+    { "src": "/api/geocode",   "dest": "/api/geocode.js"   },
+    { "src": "/api/transit",   "dest": "/api/transit.js"   },
+    { "src": "/",              "dest": "/index.html"        }
   ]
 }
