@@ -76,7 +76,7 @@ module.exports = async (req, res) => {
       params: {
         engine: 'google',
         q: 'movies playing today near me',
-        location: `${lat},${lng}`,
+        ll: `@${lat},${lng},14z`,
         hl: 'en',
         gl: 'us',
         api_key: process.env.SERPAPI_KEY,
