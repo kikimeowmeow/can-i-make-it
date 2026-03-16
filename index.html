@@ -57,8 +57,52 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 14px 0;
+      padding: 14px 0 10px;
       gap: 32px;
+    }
+    .header-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 10px;
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+    }
+    .header-search-input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 0;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      letter-spacing: 0.03em;
+    }
+    .header-search-input::placeholder { color: var(--text-dim); }
+    .header-search-input:focus { border-color: var(--text); }
+    .header-search-btn {
+      flex-shrink: 0;
+      background: transparent;
+      border: 1px solid var(--border-heavy);
+      color: var(--text);
+      padding: 6px 12px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .header-search-btn:hover { background: var(--text); color: var(--bg); }
+    .header-search-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      flex-shrink: 0;
     }
     .logo {
       font-family: var(--font-serif);
@@ -430,7 +474,7 @@
 <header>
   <div class="header-top">
     <div class="logo">Can I Catch It?</div>
-    <div id="locationLabel">Locating…</div>
+    <div id="locationLabel">–</div>
     <div class="header-right">
       <div id="clockDisplay">--:-- --</div>
       <button class="refresh-btn" id="refreshBtn" onclick="refresh()">
@@ -442,21 +486,22 @@
       </button>
     </div>
   </div>
+  <div class="header-search">
+    <span class="header-search-label">From</span>
+    <input class="header-search-input" id="headerAddressInput" type="text"
+      placeholder="Address or intersection…"
+      onkeydown="if(event.key==='Enter') startFromAddress()" />
+    <button class="header-search-btn" onclick="startFromAddress()">Search</button>
+    <button class="header-search-btn" onclick="startLoading()" title="Use my GPS location">GPS</button>
+  </div>
 </header>
 
 <main id="main">
   <div class="state-center">
     <div class="state-icon pulse">C</div>
     <div class="state-title">Can I Catch It?</div>
-    <div class="state-sub">Find movies you can still make — factoring in travel time and pre-show trailers.</div>
-    <button class="btn" onclick="startLoading()">Use My Location</button>
-    <div class="divider">or</div>
-    <div class="address-form">
-      <input class="address-input" id="addressInput" type="text"
-        placeholder="Enter a starting address…"
-        onkeydown="if(event.key==='Enter') startFromAddress()" />
-      <button class="btn-ghost" onclick="startFromAddress()">Search from This Address</button>
-    </div>
+    <div class="state-sub">Enter an address above, or use your GPS to find movies you can still make.</div>
+    <button class="btn" onclick="startLoading()">Use My GPS Location</button>
   </div>
 </main>
 
@@ -557,13 +602,15 @@ async function getTransitTime(destLat, destLng) {
     const data = await fetchJSON(
       `/api/transit?origin_lat=${userLocation.lat}&origin_lng=${userLocation.lng}&dest_lat=${destLat}&dest_lng=${destLng}`
     );
-    return data.duration_seconds != null ? data.duration_seconds / 60 : null;
+    return data.duration_seconds != null
+      ? { mins: data.duration_seconds / 60, mode: data.mode || 'transit' }
+      : null;
   } catch { return null; }
 }
 
 // ── Main load flow ─────────────────────────────────────────────────────────
 async function startFromAddress() {
-  const input = document.getElementById('addressInput');
+  const input = document.getElementById('headerAddressInput');
   const address = input ? input.value.trim() : '';
   if (!address) return;
 
@@ -624,10 +671,10 @@ async function loadShowtimes() {
 
   const enriched = await Promise.all(theaters.map(async (theater) => {
     const loc = await geocodeTheater(theater.address);
-    const transitMins = loc
-      ? (await getTransitTime(loc.lat, loc.lng)) ?? 30
-      : 30;
-    return { ...theater, loc, transitMins };
+    const travelResult = loc ? await getTransitTime(loc.lat, loc.lng) : null;
+    const transitMins = travelResult?.mins ?? 30;
+    const travelMode  = travelResult?.mode ?? 'driving';
+    return { ...theater, loc, transitMins, travelMode };
   }));
 
   const now = Date.now();
@@ -649,6 +696,7 @@ async function loadShowtimes() {
           chain:           theater.chain,
           preshow:         theater.preshow_minutes,
           transitMins:     theater.transitMins,
+          travelMode:      theater.travelMode,
           showtime:        slot.timestamp,
           showtimeDisplay: slot.display,
           ...info,
@@ -709,7 +757,7 @@ function renderResults({ entries, updatedAt }) {
 }
 
 function renderCard(e) {
-  const { title, movieLink, theater, chain, preshow, transitMins, showtime, showtimeDisplay,
+  const { title, movieLink, theater, chain, preshow, transitMins, travelMode, showtime, showtimeDisplay,
           status, bufferMins, leaveByMs, leaveInMins, actualStartMs } = e;
 
   let leaveCta = '';
@@ -754,7 +802,7 @@ function renderCard(e) {
           ${preshowBadge}
         </div>
         <div class="card-footer">
-          <div class="footer-item"><span>${fmtMins(transitMins)} by transit</span></div>
+          <div class="footer-item"><span>${fmtMins(transitMins)} by ${travelMode === 'driving' ? 'car' : 'transit'}</span></div>
           <div class="footer-item leave-cta ${leaveClass}">${leaveCta}</div>
         </div>
       </div>
