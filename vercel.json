@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/api/showtimes", "destination": "/api/showtimes.js" },
+    { "source": "/api/geocode",   "destination": "/api/geocode.js"   },
+    { "source": "/api/transit",   "destination": "/api/transit.js"   }
+  ]
+}
