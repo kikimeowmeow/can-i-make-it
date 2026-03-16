@@ -63,6 +63,28 @@ function parseShowtime(timeStr) {
   return showtime.getTime();
 }
 
+// Reverse geocode lat/lng → "City, State, Country" for SerpApi location param
+async function reverseGeocode(lat, lng) {
+  if (!process.env.GOOGLE_MAPS_KEY) return null;
+  try {
+    const r = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+      params: { latlng: `${lat},${lng}`, key: process.env.GOOGLE_MAPS_KEY },
+      timeout: 6000,
+    });
+    const result = r.data.results?.[0];
+    if (!result) return null;
+    // Extract city, state, country from address components
+    const comps = result.address_components;
+    const get = (type) => comps.find((c) => c.types.includes(type))?.long_name;
+    const city    = get('locality') || get('sublocality') || get('neighborhood');
+    const state   = get('administrative_area_level_1');
+    const country = get('country');
+    return [city, state, country].filter(Boolean).join(', ');
+  } catch {
+    return null;
+  }
+}
+
 module.exports = async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng are required' });
@@ -72,11 +94,15 @@ module.exports = async (req, res) => {
   }
 
   try {
+    // Reverse geocode to get a city name SerpApi can use
+    const location = await reverseGeocode(lat, lng);
+
     const serpRes = await axios.get('https://serpapi.com/search', {
       params: {
         engine: 'google',
         q: 'movies playing today near me',
         ll: `@${lat},${lng},14z`,
+        ...(location && { location }),
         hl: 'en',
         gl: 'us',
         api_key: process.env.SERPAPI_KEY,
