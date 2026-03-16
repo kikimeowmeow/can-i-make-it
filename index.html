@@ -373,6 +373,38 @@
       100% { width: 0%; margin-left: 100%; }
     }
 
+    /* ── Address input ─────────────────────────────────────────────────────── */
+    .address-form {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 380px;
+    }
+    .address-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border-heavy);
+      border-radius: 0;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      text-align: center;
+      letter-spacing: 0.03em;
+    }
+    .address-input::placeholder { color: var(--text-dim); }
+    .address-input:focus { border-color: var(--text); }
+    .divider {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+    }
+
     /* ── Empty section ─────────────────────────────────────────────────────── */
     .empty-section {
       padding: 20px;
@@ -417,7 +449,14 @@
     <div class="state-icon pulse">C</div>
     <div class="state-title">Can I Catch It?</div>
     <div class="state-sub">Find movies you can still make — factoring in travel time and pre-show trailers.</div>
-    <button class="btn" onclick="startLoading()">Find Movies Near Me</button>
+    <button class="btn" onclick="startLoading()">Use My Location</button>
+    <div class="divider">or</div>
+    <div class="address-form">
+      <input class="address-input" id="addressInput" type="text"
+        placeholder="Enter a starting address…"
+        onkeydown="if(event.key==='Enter') startFromAddress()" />
+      <button class="btn-ghost" onclick="startFromAddress()">Search from This Address</button>
+    </div>
   </div>
 </main>
 
@@ -523,6 +562,23 @@ async function getTransitTime(destLat, destLng) {
 }
 
 // ── Main load flow ─────────────────────────────────────────────────────────
+async function startFromAddress() {
+  const input = document.getElementById('addressInput');
+  const address = input ? input.value.trim() : '';
+  if (!address) return;
+
+  setState('loading', 'Looking up address…');
+  try {
+    const loc = await fetchJSON(`/api/geocode?address=${encodeURIComponent(address)}`);
+    userLocation = { lat: loc.lat, lng: loc.lng };
+    document.getElementById('locationLabel').textContent =
+      address.length > 40 ? address.slice(0, 38) + '…' : address;
+    await loadShowtimes();
+  } catch (err) {
+    setState('error', 'Address not found', err.message, true);
+  }
+}
+
 async function startLoading() {
   const locLabel = document.getElementById('locationLabel');
 
@@ -545,6 +601,10 @@ async function startLoading() {
   }
 
   locLabel.textContent = `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`;
+  await loadShowtimes();
+}
+
+async function loadShowtimes() {
   setState('loading', 'Finding nearby movies…');
 
   let theaters;
@@ -731,7 +791,8 @@ function refresh() {
   const btn = document.getElementById('refreshBtn');
   btn.classList.add('spinning');
   if (lastRender) renderResults(lastRender);
-  startLoading().finally(() => btn.classList.remove('spinning'));
+  const action = userLocation ? loadShowtimes() : startLoading();
+  action.finally(() => btn.classList.remove('spinning'));
 }
 
 setInterval(() => { if (userLocation) startLoading(); }, 5 * 60 * 1000);
