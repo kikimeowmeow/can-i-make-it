@@ -119,7 +119,7 @@ module.exports = async (req, res) => {
     const serpRes = await axios.get('https://serpapi.com/search', {
       params: {
         engine: 'google',
-        q: 'movies near me',
+        q: 'showtimes',
         location,
         hl: 'en',
         gl: 'us',
