@@ -129,12 +129,13 @@ module.exports = async (req, res) => {
     });
 
     const rawShowtimes = serpRes.data.showtimes || [];
-    console.log('[showtimes] raw count:', rawShowtimes.length, '| top-level keys:', Object.keys(serpRes.data));
+    const responseKeys = Object.keys(serpRes.data);
+    console.log('[showtimes] raw count:', rawShowtimes.length, '| top-level keys:', responseKeys);
 
     if (rawShowtimes.length === 0) {
       return res.json({
         theaters: [],
-        note: `No showtimes found. Location used: "${location}"`,
+        note: `No showtimes found. Location: "${location}" | SerpApi keys: ${responseKeys.join(', ')}`,
       });
     }
 
