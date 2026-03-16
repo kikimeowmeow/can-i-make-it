@@ -96,13 +96,13 @@ module.exports = async (req, res) => {
   try {
     // Reverse geocode to get a city name SerpApi can use
     const location = await reverseGeocode(lat, lng);
+    console.log('[showtimes] resolved location:', location);
 
     const serpRes = await axios.get('https://serpapi.com/search', {
       params: {
         engine: 'google',
-        q: 'movies playing today near me',
-        ll: `@${lat},${lng},14z`,
-        ...(location && { location }),
+        q: 'movies near me',
+        location: location || `${lat},${lng}`,
         hl: 'en',
         gl: 'us',
         api_key: process.env.SERPAPI_KEY,
@@ -111,6 +111,7 @@ module.exports = async (req, res) => {
     });
 
     const rawShowtimes = serpRes.data.showtimes || [];
+    console.log('[showtimes] raw count:', rawShowtimes.length, '| keys:', Object.keys(serpRes.data));
 
     if (rawShowtimes.length === 0) {
       return res.json({ theaters: [], note: 'No showtimes returned by SerpApi for this location' });
