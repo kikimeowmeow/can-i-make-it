@@ -63,7 +63,7 @@ function parseShowtime(timeStr) {
   return showtime.getTime();
 }
 
-// Reverse geocode lat/lng → "City, State, Country" for SerpApi location param
+// Reverse geocode lat/lng → "City, State" string
 async function reverseGeocode(lat, lng) {
   if (!process.env.GOOGLE_MAPS_KEY) return null;
   try {
@@ -73,13 +73,25 @@ async function reverseGeocode(lat, lng) {
     });
     const result = r.data.results?.[0];
     if (!result) return null;
-    // Extract city, state, country from address components
     const comps = result.address_components;
     const get = (type) => comps.find((c) => c.types.includes(type))?.long_name;
-    const city    = get('locality') || get('sublocality') || get('neighborhood');
-    const state   = get('administrative_area_level_1');
-    const country = get('country');
-    return [city, state, country].filter(Boolean).join(', ');
+    const city  = get('locality') || get('sublocality') || get('neighborhood');
+    const state = get('administrative_area_level_1');
+    return [city, state].filter(Boolean).join(', ');
+  } catch {
+    return null;
+  }
+}
+
+// Look up a validated location string from SerpApi's locations database
+async function getSerpApiLocation(cityState) {
+  if (!cityState) return null;
+  try {
+    const r = await axios.get('https://serpapi.com/locations.json', {
+      params: { q: cityState, limit: 1 },
+      timeout: 5000,
+    });
+    return r.data?.[0]?.name || null;
   } catch {
     return null;
   }
@@ -94,15 +106,21 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // Reverse geocode to get a city name SerpApi can use
-    const location = await reverseGeocode(lat, lng);
-    console.log('[showtimes] resolved location:', location);
+    // Step 1: reverse geocode to get "City, State"
+    const cityState = await reverseGeocode(lat, lng);
+    console.log('[showtimes] cityState from geocode:', cityState);
+
+    // Step 2: validate against SerpApi's location database
+    const serpLocation = await getSerpApiLocation(cityState);
+    console.log('[showtimes] serpLocation:', serpLocation);
+
+    const location = serpLocation || cityState || `${lat},${lng}`;
 
     const serpRes = await axios.get('https://serpapi.com/search', {
       params: {
         engine: 'google',
         q: 'movies near me',
-        location: location || `${lat},${lng}`,
+        location,
         hl: 'en',
         gl: 'us',
         api_key: process.env.SERPAPI_KEY,
@@ -111,10 +129,13 @@ module.exports = async (req, res) => {
     });
 
     const rawShowtimes = serpRes.data.showtimes || [];
-    console.log('[showtimes] raw count:', rawShowtimes.length, '| keys:', Object.keys(serpRes.data));
+    console.log('[showtimes] raw count:', rawShowtimes.length, '| top-level keys:', Object.keys(serpRes.data));
 
     if (rawShowtimes.length === 0) {
-      return res.json({ theaters: [], note: 'No showtimes returned by SerpApi for this location' });
+      return res.json({
+        theaters: [],
+        note: `No showtimes found. Location used: "${location}"`,
+      });
     }
 
     const theaters = rawShowtimes.map((t) => ({
