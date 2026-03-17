@@ -11,6 +11,7 @@ function distanceMiles(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Always build timestamps anchored to America/New_York, regardless of server timezone.
 function parseShowtime(timeStr) {
   if (!timeStr) return null;
   const clean = timeStr.trim().toLowerCase().replace(/\s+/g, '');
@@ -20,10 +21,39 @@ function parseShowtime(timeStr) {
   const m = parseInt(match[2]);
   if (match[3] === 'pm' && h !== 12) h += 12;
   if (match[3] === 'am' && h === 12) h = 0;
-  const t = new Date();
-  t.setHours(h, m, 0, 0);
-  if (t.getTime() < Date.now() - 2 * 3600000) t.setDate(t.getDate() + 1);
-  return t.getTime();
+
+  const now = new Date();
+
+  // Get today's date parts in NYC and compute the UTC offset.
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour: 'numeric', minute: 'numeric', second: 'numeric',
+      hour12: false,
+    }).formatToParts(now).map(p => [p.type, p.value])
+  );
+  const nyY = +parts.year, nyM = +parts.month - 1, nyD = +parts.day;
+  const nyH = +parts.hour === 24 ? 0 : +parts.hour;
+  const nyMin = +parts.minute, nySec = +parts.second;
+
+  // offsetMs = how much NYC "appears" ahead of UTC when treated naively.
+  // e.g. EDT (-4h): offsetMs ≈ -14 400 000
+  const offsetMs = Date.UTC(nyY, nyM, nyD, nyH, nyMin, nySec) - now.getTime();
+
+  // UTC timestamp for today's NYC midnight, then add the showtime.
+  let ts = Date.UTC(nyY, nyM, nyD) - offsetMs + (h * 3600 + m * 60) * 1000;
+  if (isNaN(ts)) return null;
+
+  // If the showtime has passed by more than 2 h, assume it's tomorrow.
+  if (ts < now.getTime() - 2 * 3600000) ts += 24 * 3600000;
+  return ts;
+}
+
+// Return true if a Date object falls on today in NYC.
+function isNYCToday(dateObj) {
+  const fmt = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
+  return fmt(dateObj) === fmt(new Date());
 }
 
 // ── Nitehawk (Prospect Park + Williamsburg — same site structure) ─────────────
@@ -63,7 +93,6 @@ async function fetchFilmForum(theater) {
     timeout: 12000,
   });
   const $ = cheerio.load(html);
-  const today = new Date();
   const movies = {};
 
   $('script[type="application/ld+json"]').each((_, el) => {
@@ -77,17 +106,17 @@ async function fetchFilmForum(theater) {
         if (!title) continue;
         const d = new Date(item.startDate);
         if (isNaN(d)) continue;
-        // Only today's screenings
-        if (d.getDate() !== today.getDate() ||
-            d.getMonth() !== today.getMonth() ||
-            d.getFullYear() !== today.getFullYear()) continue;
-        let h = d.getHours();
-        const m = d.getMinutes();
-        const ap = h >= 12 ? 'pm' : 'am';
-        if (h > 12) h -= 12;
-        if (h === 0) h = 12;
-        const display = `${h}:${String(m).padStart(2, '0')}${ap}`;
-        const ts = parseShowtime(display);
+        if (!isNYCToday(d)) continue;
+
+        // Convert to NYC display time
+        const nyParts = Object.fromEntries(
+          new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York',
+            hour: 'numeric', minute: '2-digit', hour12: true,
+          }).formatToParts(d).map(p => [p.type, p.value])
+        );
+        const display = `${nyParts.hour}:${nyParts.minute}${nyParts.dayPeriod.toLowerCase()}`;
+        const ts = d.getTime(); // ISO date is already a correct UTC timestamp
         if (!ts) continue;
         if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
         movies[title].times.push({ display, timestamp: ts });
