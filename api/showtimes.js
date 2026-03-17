@@ -136,22 +136,33 @@ async function fetchIFC(theater) {
   const $ = cheerio.load(html);
   const movies = {};
 
-  // Structure:
-  //   <h3>Mon Mar 16</h3>          ← date header (h3 with NO link inside)
-  //   <div>
-  //     <h3><a href="/films/slug/">Film Title</a></h3>   ← film title
-  //     <ul>
-  //       <li><a href="https://tickets.ifccenter.com/...">7:00 PM</a></li>
-  //     </ul>
-  //   </div>
-  //
-  // Distinguish film-title h3 from date-header h3 by presence of an /films/ link.
+  // Page structure: date headers are plain <h3> siblings ("Mon Mar 16"),
+  // followed by <div> siblings each containing a film <h3><a href="/films/..."> and a <ul> of showtimes.
+  // The next date <h3> ends that day's section.
 
-  $('h3:has(a[href*="/films/"])').each((_, titleEl) => {
+  // Build today's header string in IFC's format: "Mon Mar 16"
+  const todayHeader = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short', month: 'short', day: 'numeric',
+  }).format(new Date()).replace(',', '').trim();
+
+  // Find the h3 whose text matches today
+  const $todayH3 = $('h3').filter((_, el) =>
+    $(el).text().replace(',', '').trim() === todayHeader
+  ).first();
+
+  if (!$todayH3.length) {
+    console.error('[ifc] today header not found, looked for:', todayHeader);
+    return [];
+  }
+
+  // nextUntil('h3') collects all direct siblings until the next date h3
+  const $todaySection = $todayH3.nextUntil('h3');
+
+  $todaySection.find('h3:has(a[href*="/films/"])').each((_, titleEl) => {
     const title = $(titleEl).find('a').first().text().trim();
     if (!title) return;
 
-    // Showtimes are in the <ul> that follows this h3 (sibling or inside same parent div)
     const $ul = $(titleEl).nextAll('ul').first();
     if (!$ul.length) return;
 
@@ -163,7 +174,10 @@ async function fetchIFC(theater) {
       const ts = parseShowtime(display);
       if (!ts) return;
       if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
-      movies[title].times.push({ display, timestamp: ts });
+      // Deduplicate
+      if (!movies[title].times.find(t => t.timestamp === ts)) {
+        movies[title].times.push({ display, timestamp: ts });
+      }
     });
   });
 
