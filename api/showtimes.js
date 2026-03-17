@@ -76,17 +76,25 @@ function stripOC(s) {
 // OC info is NOT in the API — only in the rendered HTML as class="has-open-captions"
 // on <a data-showtime_id="XXXXXX"> elements. We fetch both and cross-reference by ID.
 async function fetchNitehawk(theater) {
-  const [{ data }, { data: html }] = await Promise.all([
+  const [apiResult, htmlResult] = await Promise.allSettled([
     axios.get(`${theater.api_base}/wp-json/nj/v1/showtime/listings`, { headers: { 'User-Agent': UA }, timeout: 12000 }),
     axios.get(theater.api_base + '/', { headers: { 'User-Agent': UA }, timeout: 12000 }),
   ]);
 
-  // Build set of showtime IDs that have OC from the HTML
-  const $h = cheerio.load(html);
+  // If the main API failed, fail the whole scraper
+  if (apiResult.status === 'rejected') throw apiResult.reason;
+  const data = apiResult.value.data;
+
+  // OC detection is best-effort — HTML failure just means oc: false on all times
   const ocIds = new Set();
-  $h('a.has-open-captions[data-showtime_id]').each((_, el) => {
-    ocIds.add(String($h(el).attr('data-showtime_id')));
-  });
+  if (htmlResult.status === 'fulfilled') {
+    const $h = cheerio.load(htmlResult.value.data);
+    $h('a.has-open-captions[data-showtime_id]').each((_, el) => {
+      ocIds.add(String($h(el).attr('data-showtime_id')));
+    });
+  } else {
+    console.warn(`[nitehawk] OC HTML fetch failed for ${theater.id}:`, htmlResult.reason?.message);
+  }
 
   // Today's date in NYC as "YYYYMMDD" for filtering
   const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
@@ -777,14 +785,30 @@ const THEATERS = [
   },
 ];
 
-// ── Handler ───────────────────────────────────────────────────────────────────
-module.exports = async (req, res) => {
-  const { lat, lng } = req.query;
-  if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
+// ── Server-side showtime cache ────────────────────────────────────────────────
+// Keyed by rounded lat/lng bucket so nearby users share a warm cache.
+// Fresh window: serve immediately. Grace window: serve stale + revalidate in bg.
+const showtimeCache = new Map();
+const CACHE_TTL_MS   = 5 * 60 * 1000;  // 5 min — serve as fresh
+const CACHE_GRACE_MS = 8 * 60 * 1000;  // 8 min — serve stale + kick off background scrape
+const revalidating   = new Set();       // prevents duplicate bg scrapes per instance
 
-  const userLat = parseFloat(lat);
-  const userLng = parseFloat(lng);
+function locationBucket(lat, lng) {
+  return `${(+lat).toFixed(2)},${(+lng).toFixed(2)}`;
+}
 
+// Recompute distance_miles and re-sort for the exact requesting coordinates
+// (bucket rounding means two users 1km apart may share a cache entry but need correct sort order)
+function rehydrate(payload, userLat, userLng) {
+  const theaters = payload.theaters.map(t => {
+    if (t.lat == null || t.lng == null) return t;
+    return { ...t, distance_miles: distanceMiles(userLat, userLng, t.lat, t.lng) };
+  }).sort((a, b) => a.distance_miles - b.distance_miles);
+  return { ...payload, theaters };
+}
+
+// ── Core scraper logic (extracted for cache reuse) ────────────────────────────
+async function runScrapers(userLat, userLng) {
   const sorted = THEATERS
     .map(t => ({ ...t, distance_miles: distanceMiles(userLat, userLng, t.lat, t.lng) }))
     .sort((a, b) => a.distance_miles - b.distance_miles);
@@ -795,6 +819,8 @@ module.exports = async (req, res) => {
     return {
       name: theater.name,
       address: theater.address,
+      lat: theater.lat,
+      lng: theater.lng,
       distance_miles: theater.distance_miles,
       link: theater.link,
       chain: theater.chain,
@@ -803,10 +829,12 @@ module.exports = async (req, res) => {
     };
   }));
 
+  const errors = [];
   const theaters = results
     .map((r, i) => {
       if (r.status === 'rejected') {
         console.error(`[${sorted[i].id}] failed:`, r.reason?.message);
+        errors.push(sorted[i].name);
         return null;
       }
       return r.value;
@@ -832,7 +860,6 @@ module.exports = async (req, res) => {
     const scrapedNamesList = theaters.map(t => t.name.toLowerCase().trim());
     for (const theater of theaters) {
       const tName = theater.name.toLowerCase().trim();
-      // Find the matching SS venue (bidirectional prefix)
       const ssKey = [...ssVenueFilms.keys()].find(k => k.startsWith(tName) || tName.startsWith(k));
       if (!ssKey) continue;
       const ssTitles = ssVenueFilms.get(ssKey);
@@ -853,10 +880,10 @@ module.exports = async (req, res) => {
     }
   } catch (err) {
     console.error('[screenslate] failed:', err.message);
+    errors.push('Screen Slate');
   }
 
   // Final dedup: within each theater merge any movies sharing a normalized title
-  // (catches special-char variants from multiple scrape paths or SS cross-contamination)
   for (const t of theaters) {
     const merged = {};
     for (const m of t.movies) {
@@ -869,12 +896,44 @@ module.exports = async (req, res) => {
             merged[key].times.push(slot);
           }
         }
-        // Prefer the SS-badged source if either entry has it
         if (m.source === 'screenslate') merged[key].source = 'screenslate';
       }
     }
     t.movies = Object.values(merged);
   }
 
-  res.json({ theaters });
+  return { theaters, errors };
+}
+
+// ── Handler ───────────────────────────────────────────────────────────────────
+module.exports = async (req, res) => {
+  const { lat, lng } = req.query;
+  if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
+
+  const userLat = parseFloat(lat);
+  const userLng = parseFloat(lng);
+  const bucket  = locationBucket(userLat, userLng);
+  const now     = Date.now();
+  const cached  = showtimeCache.get(bucket);
+  const age     = cached ? now - cached.ts : Infinity;
+
+  // Fully fresh — serve immediately
+  if (cached && age < CACHE_TTL_MS) {
+    return res.json({ ...rehydrate(cached.payload, userLat, userLng), cached: true, cachedAt: cached.ts });
+  }
+
+  // Stale but within grace — respond immediately with old data, revalidate in background
+  if (cached && age < CACHE_GRACE_MS && !revalidating.has(bucket)) {
+    revalidating.add(bucket);
+    runScrapers(userLat, userLng)
+      .then(payload => showtimeCache.set(bucket, { ts: Date.now(), payload }))
+      .catch(err => console.error('[cache] background revalidation failed:', err.message))
+      .finally(() => revalidating.delete(bucket));
+    return res.json({ ...rehydrate(cached.payload, userLat, userLng), cached: true, cachedAt: cached.ts });
+  }
+
+  // Cache miss or expired — scrape synchronously
+  const payload = await runScrapers(userLat, userLng);
+  showtimeCache.set(bucket, { ts: now, payload });
+  res.json({ ...payload, cached: false, cachedAt: now });
 };
