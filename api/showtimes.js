@@ -312,6 +312,16 @@ async function fetchAlamo(theater) {
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
+// Normalize a film title for dedup keying — strips accents and smart quotes so
+// "Sirāt" == "Sirat" and "Wuthering Heights" == "Wuthering Heights".
+function normalizeTitle(s) {
+  return (s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip combining accents
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'") // smart single quotes → '
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036\u00AB\u00BB]/g, '"') // smart double quotes → "
+    .replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 // ── BAM Rose Cinemas ─────────────────────────────────────────────────────────
 // Two-step: 1) scrape /film for "Now Playing" film page links,
 //           2) hit /api/BAMApi/GetPerformancesByProduction?ProductionPageId=XXXXX per film.
@@ -378,9 +388,11 @@ async function fetchBAM(theater) {
       if (!ts) continue;
 
       const ticketUrl = $p('a').attr('href') || theater.link;
-      if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
-      if (!movies[title].times.find(t => t.timestamp === ts)) {
-        movies[title].times.push({ display, timestamp: ts, ticketUrl });
+      // Use normalized key so "Sirāt"/"Sirat" and smart-quote variants merge into one entry
+      const key = normalizeTitle(title);
+      if (!movies[key]) movies[key] = { title, link: filmUrl, times: [] };
+      if (!movies[key].times.find(t => t.timestamp === ts)) {
+        movies[key].times.push({ display, timestamp: ts, ticketUrl });
       }
     }
   }));
@@ -575,10 +587,9 @@ async function fetchScreenSlate(userLat, userLng) {
   const stubMap = {};
   for (const s of stubs) stubMap[s.nid] = s;
 
-  // Group by venue
+  // Group by venue — no skip filtering here; handler decides what to do with each venue
   const venueMap = {};
   for (const d of details) {
-    if (isSSSkipVenue(d.venue_title)) continue;
 
     const stub = stubMap[d.nid];
     if (!stub?.field_timestamp) continue;
@@ -755,22 +766,41 @@ module.exports = async (req, res) => {
     })
     .filter(Boolean);
 
-  // Append Screen Slate venues (non-traditional spaces not covered above).
-  // Three dedup gates:
-  //   1. isSSSkipVenue() — static prefix list for known scraped venues
-  //   2. Bidirectional prefix match against actual scraped theater names
-  //   3. Exact name match as final fallback
+  // Screen Slate integration — two roles:
+  //   1. TAG individual films at already-scraped venues with source:'screenslate' (curatorial badge)
+  //   2. ADD entirely new venues that have no dedicated scraper
   try {
-    const existingNames = new Set(theaters.map(t => t.name.toLowerCase().trim()));
-    const scrapedNamesList = [...existingNames];
-    const ssTheaters = await fetchScreenSlate(userLat, userLng);
-    for (const t of ssTheaters) {
-      const ssName = (t.name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const allSSTheaters = await fetchScreenSlate(userLat, userLng);
+
+    // Build lookup: normalized venue name → Set of normalized film titles from SS
+    const ssVenueFilms = new Map();
+    for (const t of allSSTheaters) {
+      const key = (t.name || '').toLowerCase().trim();
+      if (!key) continue;
+      if (!ssVenueFilms.has(key)) ssVenueFilms.set(key, new Set());
+      for (const m of t.movies) ssVenueFilms.get(key).add(m.title.toLowerCase().trim());
+    }
+
+    // Role 1: tag scraped films that SS also covers
+    const scrapedNamesList = theaters.map(t => t.name.toLowerCase().trim());
+    for (const theater of theaters) {
+      const tName = theater.name.toLowerCase().trim();
+      // Find the matching SS venue (bidirectional prefix)
+      const ssKey = [...ssVenueFilms.keys()].find(k => k.startsWith(tName) || tName.startsWith(k));
+      if (!ssKey) continue;
+      const ssTitles = ssVenueFilms.get(ssKey);
+      for (const m of theater.movies) {
+        if (ssTitles.has(m.title.toLowerCase().trim())) m.source = 'screenslate';
+      }
+    }
+
+    // Role 2: add SS venues with no matching scraper
+    const existingNames = new Set(scrapedNamesList);
+    for (const t of allSSTheaters) {
+      const ssName = (t.name || '').toLowerCase().trim();
       if (!ssName) continue;
       if (isSSSkipVenue(t.name)) continue;
-      // Bidirectional: "Film Forum" matches scraped "Film Forum"; "BAM" matches scraped "BAM Rose Cinemas"
-      const nameConflict = scrapedNamesList.some(n => ssName.startsWith(n) || n.startsWith(ssName));
-      if (nameConflict) continue;
+      if (scrapedNamesList.some(n => ssName.startsWith(n) || n.startsWith(ssName))) continue;
       if (existingNames.has(ssName)) continue;
       theaters.push(t);
     }

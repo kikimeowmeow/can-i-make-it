@@ -705,7 +705,7 @@ async function loadShowtimes() {
           theater:         theater.name,
           chain:           theater.chain,
           preshow:         theater.preshow_minutes,
-          source:          theater.source || null,
+          source:          movie.source || theater.source || null,
           transitMins:     theater.transitMins,
           travelMode:      theater.travelMode,
           showtime:        slot.timestamp,
