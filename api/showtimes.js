@@ -264,6 +264,65 @@ async function fetchMetrograph(theater) {
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
+// ── Alamo Drafthouse ─────────────────────────────────────────────────────────
+// Legacy feeds API: feeds.drafthouse.com/adcService/showtimes.svc/market/2100/
+// Market 2100 = NYC. Filter by CinemaId for Brooklyn (2101).
+// SessionDateTime is ISO 8601 in NYC local time. SessionStatus: "onsale"|"past"|"soldout"
+async function fetchAlamo(theater) {
+  const { data } = await axios.get(
+    'https://feeds.drafthouse.com/adcService/showtimes.svc/market/2100/',
+    { headers: { 'User-Agent': UA }, timeout: 12000 }
+  );
+
+  const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+    .format(new Date()); // "2026-03-16"
+
+  const dates = data?.Market?.Dates || [];
+  const todayEntry = dates.find(d => d.Date === todayNYC);
+  if (!todayEntry) {
+    console.error('[alamo] today not found in feed:', todayNYC);
+    return [];
+  }
+
+  const cinema = (todayEntry.Cinemas || []).find(c => c.CinemaId === theater.cinema_id);
+  if (!cinema) {
+    console.error('[alamo] cinema not found:', theater.cinema_id);
+    return [];
+  }
+
+  const movies = {};
+  for (const film of cinema.Films || []) {
+    const title = film.FilmName;
+    const filmUrl = `https://drafthouse.com/nyc/show/${film.FilmSlug}`;
+
+    for (const series of film.Series || []) {
+      for (const format of series.Formats || []) {
+        for (const session of format.Sessions || []) {
+          if (session.SessionStatus === 'past') continue;
+
+          // SessionDateTime: "2026-03-16T22:30:00" — NYC local time
+          const dtMatch = (session.SessionDateTime || '').match(/T(\d{2}):(\d{2})/);
+          if (!dtMatch) continue;
+          const h = parseInt(dtMatch[1]), min = parseInt(dtMatch[2]);
+          const ampm = h >= 12 ? 'pm' : 'am';
+          const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+          const display = `${h12}:${String(min).padStart(2, '0')}${ampm}`;
+          const ts = parseShowtime(display);
+          if (!ts) continue;
+
+          const ticketUrl = `https://drafthouse.com/ticketing/${theater.cinema_id}/${session.SessionId}`;
+          if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
+          if (!movies[title].times.find(t => t.timestamp === ts)) {
+            movies[title].times.push({ display, timestamp: ts, ticketUrl });
+          }
+        }
+      }
+    }
+  }
+
+  return Object.values(movies).filter(m => m.times.length > 0);
+}
+
 // ── Film at Lincoln Center ───────────────────────────────────────────────────
 // Homepage is organized by date with <h6> headers (e.g. "TODAY", "MON", "TOMORROW", "WED")
 // followed by film cards with class "details". Times in .Showtimes span, format "7:30 PM".
@@ -404,6 +463,16 @@ const THEATERS = [
     link: 'https://nitehawkcinema.com/williamsburg/',
     api_base: 'https://nitehawkcinema.com/williamsburg',
     fetch: fetchNitehawk,
+  },
+  {
+    id: 'alamo-brooklyn',
+    name: 'Alamo Drafthouse Brooklyn',
+    address: '445 Albee Square W, Brooklyn, NY 11201',
+    lat: 40.6920, lng: -73.9871,
+    preshow_minutes: 15, chain: 'Alamo',
+    link: 'https://drafthouse.com/brooklyn',
+    cinema_id: '2101',
+    fetch: fetchAlamo,
   },
   {
     id: 'film-forum',
