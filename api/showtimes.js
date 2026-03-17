@@ -213,10 +213,10 @@ async function fetchIFC(theater) {
 }
 
 // ── Metrograph ───────────────────────────────────────────────────────────────
-// Calendar page uses h4 for film titles (with /film/?vista_film_id= links).
-// Date section headers are NOT h3/h4 with film links — they use a different element.
-// Ticket links are direct siblings of the film h4: <a href="https://t.metrograph.com/...">4:00pm</a>
-// Fetching ?date=todayDate starts the calendar from today; we filter to today's date after parsing.
+// Calendar page: each date gets its own container:
+//   <div class="calendar-list-day movies-grid" id="calendar-list-day-YYYY-MM-DD">
+// Film items inside: <div class="item ..."><h4><a class="title">Title</a></h4>
+//                    <div class="showtimes"><a href="t.metrograph.com/...">4:00pm</a></div></div>
 async function fetchMetrograph(theater) {
   const todayNYC = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
@@ -229,39 +229,29 @@ async function fetchMetrograph(theater) {
   const $ = cheerio.load(html);
   const movies = {};
 
-  // Film titles: h4 > a[href*="/film/"] (vista_film_id links)
-  // Skip h4s that don't have a /film/ link — those are date section headers
-  $('h4').each((_, titleEl) => {
-    const $titleEl = $(titleEl);
-    const $filmLink = $titleEl.find('a[href*="/film/"]').first();
-    if (!$filmLink.length) return; // date header, skip
+  const $todayDiv = $(`#calendar-list-day-${todayNYC}`);
+  if (!$todayDiv.length) {
+    console.error('[metrograph] today container not found: #calendar-list-day-' + todayNYC);
+    return [];
+  }
 
-    const title = $filmLink.text().trim();
+  $todayDiv.find('.item').each((_, item) => {
+    const $item = $(item);
+    const title = $item.find('h4 a').first().text().trim();
     if (!title) return;
 
-    // Ticket links are direct siblings between this h4 and the next h4
-    const $siblings = $titleEl.nextUntil('h4');
-    $siblings
-      .filter('a[href*="t.metrograph.com"]')
-      .add($siblings.find('a[href*="t.metrograph.com"]'))
-      .each((_, linkEl) => {
-        const timeText = $(linkEl).text().trim();
-        const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
-        if (!match) return;
-        const display = match[1].toLowerCase().replace(/\s+/g, '');
-        const ts = parseShowtime(display);
-        if (!ts) return;
-
-        // Only keep today's times (calendar may spill into tomorrow)
-        const tsDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
-          .format(new Date(ts));
-        if (tsDate !== todayNYC) return;
-
-        if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
-        if (!movies[title].times.find(t => t.timestamp === ts)) {
-          movies[title].times.push({ display, timestamp: ts });
-        }
-      });
+    $item.find('div.showtimes a').each((_, linkEl) => {
+      const timeText = $(linkEl).text().trim();
+      const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+      if (!match) return;
+      const display = match[1].toLowerCase().replace(/\s+/g, '');
+      const ts = parseShowtime(display);
+      if (!ts) return;
+      if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+      if (!movies[title].times.find(t => t.timestamp === ts)) {
+        movies[title].times.push({ display, timestamp: ts });
+      }
+    });
   });
 
   return Object.values(movies).filter(m => m.times.length > 0);
