@@ -541,7 +541,8 @@ const SS_SKIP_PREFIXES = [
 ];
 function isSSSkipVenue(venueTitle) {
   const v = (venueTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
-  return SS_SKIP_PREFIXES.some(p => v === p || v.startsWith(p + ' ') || v.startsWith(p + ','));
+  // startsWith(p) catches exact match plus any suffix ("Film Forum NYC", "Film Forum (35mm)", etc.)
+  return SS_SKIP_PREFIXES.some(p => v.startsWith(p));
 }
 
 async function fetchScreenSlate(userLat, userLng) {
@@ -748,12 +749,16 @@ module.exports = async (req, res) => {
     .filter(Boolean);
 
   // Append Screen Slate venues (non-traditional spaces not covered above).
-  // Deduplicate against existing scraped theaters by name as a second line of defense.
+  // Two dedup gates:
+  //   1. isSSSkipVenue() — catches known scraped-theater names/prefixes
+  //   2. exact name match against already-collected theaters
   try {
     const existingNames = new Set(theaters.map(t => t.name.toLowerCase().trim()));
     const ssTheaters = await fetchScreenSlate(userLat, userLng);
     for (const t of ssTheaters) {
-      if (!existingNames.has(t.name.toLowerCase().trim())) theaters.push(t);
+      if (isSSSkipVenue(t.name)) continue;
+      if (existingNames.has(t.name.toLowerCase().trim())) continue;
+      theaters.push(t);
     }
   } catch (err) {
     console.error('[screenslate] failed:', err.message);
