@@ -279,6 +279,15 @@
       border: 1px solid var(--border);
       letter-spacing: 0.04em;
     }
+    .screenslate-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 1px 5px;
+      color: #4a3470;
+      background: #e0d6f5;
+      border: 1px solid #c4b5e8;
+      letter-spacing: 0.04em;
+    }
     .card-footer {
       display: flex;
       flex-wrap: wrap;
@@ -695,6 +704,7 @@ async function loadShowtimes() {
           theater:         theater.name,
           chain:           theater.chain,
           preshow:         theater.preshow_minutes,
+          source:          theater.source || null,
           transitMins:     theater.transitMins,
           travelMode:      theater.travelMode,
           showtime:        slot.timestamp,
@@ -731,6 +741,13 @@ function renderResults({ entries, updatedAt }) {
       <div class="summary-updated">Updated ${fmt(updatedAt)}</div>
     </div>`;
 
+  if (close.length > 0) {
+    html += `<div class="section-block">
+      <div class="section-heading">Cutting It Close</div>`;
+    close.forEach((e) => { html += renderCard(e); });
+    html += `</div>`;
+  }
+
   html += `<div class="section-block">
     <div class="section-heading">Catchable Now</div>`;
   if (catchable.length === 0) {
@@ -739,13 +756,6 @@ function renderResults({ entries, updatedAt }) {
     catchable.forEach((e) => { html += renderCard(e); });
   }
   html += `</div>`;
-
-  if (close.length > 0) {
-    html += `<div class="section-block">
-      <div class="section-heading">Cutting It Close</div>`;
-    close.forEach((e) => { html += renderCard(e); });
-    html += `</div>`;
-  }
 
   if (late.length > 0) {
     html += `<div class="section-block">
@@ -758,7 +768,7 @@ function renderResults({ entries, updatedAt }) {
 }
 
 function renderCard(e) {
-  const { title, movieLink, theater, chain, preshow, transitMins, travelMode, showtime, showtimeDisplay,
+  const { title, movieLink, theater, chain, preshow, source, transitMins, travelMode, showtime, showtimeDisplay,
           status, bufferMins, leaveByMs, leaveInMins, actualStartMs } = e;
 
   let leaveCta = '';
@@ -780,6 +790,7 @@ function renderCard(e) {
 
   const chainBadge = chain ? `<span class="chain-badge">${chain}</span>` : '';
   const preshowBadge = preshow > 0 ? `<span class="preshow-badge">+${preshow}min trailers</span>` : '';
+  const ssBadge = source === 'screenslate' ? `<span class="screenslate-badge">Screen Slate</span>` : '';
   const actualStartNote = preshow > 0 ? `Movie starts ${fmt(actualStartMs)}` : `Starts ${fmt(actualStartMs)}`;
 
   const statusLabels = {
@@ -801,6 +812,7 @@ function renderCard(e) {
           <span>${theater}</span>
           ${chainBadge}
           ${preshowBadge}
+          ${ssBadge}
         </div>
         <div class="card-footer">
           <div class="footer-item"><span>${fmtMins(transitMins)} by ${travelMode === 'driving' ? 'car' : 'transit'}</span></div>

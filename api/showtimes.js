@@ -586,11 +586,11 @@ async function fetchScreenSlate(userLat, userLng) {
     const ts = parseShowtime(display);
     if (!ts) continue;
 
-    // Strip " at {venue_title}" suffix to get film title
-    const suffix = ` at ${d.venue_title}`;
-    const filmTitle = (d.title || '').endsWith(suffix)
-      ? d.title.slice(0, -suffix.length).trim()
-      : (d.title || '').trim();
+    // Strip venue suffix: Screen Slate formats all titles as "Film Title at Venue Name".
+    // Use lastIndexOf(' at ') so partial venue name mismatches don't leave the suffix behind.
+    const rawTitle = (d.title || '').trim();
+    const atIdx = rawTitle.lastIndexOf(' at ');
+    const filmTitle = atIdx > 0 ? rawTitle.slice(0, atIdx).trim() : rawTitle;
     if (!filmTitle) continue;
 
     const filmLink = d.field_url || 'https://www.screenslate.com';
@@ -617,6 +617,7 @@ async function fetchScreenSlate(userLat, userLng) {
       link: 'https://www.screenslate.com',
       chain: null,
       preshow_minutes: info?.preshow ?? 5,
+      source: 'screenslate',
       movies,
     };
   }).filter(Boolean);
