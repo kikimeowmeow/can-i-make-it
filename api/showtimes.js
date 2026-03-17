@@ -212,7 +212,7 @@ async function fetchIFC(theater) {
   const $todaySection = $todayH3.nextUntil('h3');
 
   $todaySection.find('h3:has(a[href*="/films/"])').each((_, titleEl) => {
-    const { clean: title } = stripOC($(titleEl).find('a').first().text().trim());
+    const { clean: title, oc: titleOC } = stripOC($(titleEl).find('a').first().text().trim());
     if (!title) return;
 
     const $ul = $(titleEl).nextAll('ul').first();
@@ -220,7 +220,8 @@ async function fetchIFC(theater) {
 
     $ul.find('a[href*="tickets.ifccenter.com"]').each((_, linkEl) => {
       const timeText = $(linkEl).text().trim();
-      const { oc } = stripOC(timeText);
+      const { oc: timeOC } = stripOC(timeText);
+      const oc = titleOC || timeOC;
       const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
       if (!match) return;
       const display = match[1].toLowerCase().replace(/\s+/g, '');

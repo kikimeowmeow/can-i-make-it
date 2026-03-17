@@ -579,14 +579,14 @@ let lastRender = null;
 // ── Clock ──────────────────────────────────────────────────────────────────
 function tickClock() {
   document.getElementById('clockDisplay').textContent =
-    new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
 }
 setInterval(tickClock, 1000);
 tickClock();
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(ms) {
-  return new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
 }
 function fmtMins(mins) {
   mins = Math.round(mins);
@@ -713,7 +713,7 @@ async function loadShowtimes() {
 
   const now = Date.now();
   const WINDOW_PAST   = 2 * 60 * 60000;
-  const WINDOW_FUTURE = 3 * 60 * 60000;
+  const WINDOW_FUTURE = 4 * 60 * 60000;
 
   const entries = [];
   for (const theater of enriched) {
@@ -753,17 +753,18 @@ function renderResults({ entries, updatedAt }) {
   }));
 
   const nowMs     = Date.now();
-  const catchable = live.filter((e) => e.status === 'catchable' && e.showtime <= nowMs + 90 * 60000).sort((a, b) => a.showtime - b.showtime);
-  const close     = live.filter((e) => e.status === 'close')                                        .sort((a, b) => a.showtime - b.showtime);
-  const late      = live.filter((e) => e.status === 'too-late' && e.showtime < nowMs && e.showtime >= nowMs - 30 * 60000).sort((a, b) => a.showtime - b.showtime);
+  const catchable  = live.filter((e) => e.status === 'catchable' && e.showtime <= nowMs + 90 * 60000).sort((a, b) => a.showtime - b.showtime);
+  const close      = live.filter((e) => e.status === 'close')                                        .sort((a, b) => a.showtime - b.showtime);
+  const cantMake   = live.filter((e) => e.status === 'too-late' && e.showtime >= nowMs)              .sort((a, b) => a.showtime - b.showtime);
+  const late       = live.filter((e) => e.status === 'too-late' && e.showtime < nowMs && e.showtime >= nowMs - 30 * 60000).sort((a, b) => a.showtime - b.showtime);
 
   let html = '';
 
   html += `
     <div class="summary-bar">
       <div class="summary-pill"><span class="dot dot-green"></span>${pluralize(catchable.length, 'movie')} catchable</div>
-      <div class="summary-pill"><span class="dot dot-yellow"></span>${pluralize(close.length, 'movie')} cutting it close</div>
-      <div class="summary-pill"><span class="dot dot-red"></span>${pluralize(late.length, 'movie')} started</div>
+      <div class="summary-pill"><span class="dot dot-yellow"></span>${pluralize(close.length, 'movie')} close</div>
+      <div class="summary-pill"><span class="dot dot-red"></span>${pluralize(cantMake.length + late.length, 'movie')} won't make</div>
       <div class="summary-updated">Updated ${fmt(updatedAt)}</div>
     </div>`;
 
@@ -782,6 +783,13 @@ function renderResults({ entries, updatedAt }) {
     catchable.forEach((e) => { html += renderCard(e); });
   }
   html += `</div>`;
+
+  if (cantMake.length > 0) {
+    html += `<div class="section-block">
+      <div class="section-heading">Can't Make It</div>`;
+    cantMake.forEach((e) => { html += renderCard(e); });
+    html += `</div>`;
+  }
 
   if (late.length > 0) {
     html += `<div class="section-block">
@@ -811,7 +819,11 @@ function renderCard(e) {
     }
   } else {
     const minsLate = Math.round(-bufferMins);
-    leaveCta = `Movie started ~${minsLate}m ago`;
+    if (showtime > Date.now()) {
+      leaveCta = `You'd arrive ~${minsLate}m into the film`;
+    } else {
+      leaveCta = `Movie started ~${minsLate}m ago`;
+    }
   }
 
   const chainBadge = chain ? `<span class="chain-badge">${chain}</span>` : '';
@@ -836,12 +848,12 @@ function renderCard(e) {
       <div class="card-left">
         <div class="card-title-row">
           <div class="card-title">${titleEl}</div>
-          ${ocBadge}
         </div>
         <div class="card-meta">
           <span>${theater}</span>
           ${chainBadge}
           ${preshowBadge}
+          ${ocBadge}
           ${ssBadge}
         </div>
         <div class="card-footer">
