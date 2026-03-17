@@ -13,281 +13,259 @@ function distanceMiles(lat1, lng1, lat2, lng2) {
 
 function parseShowtime(timeStr) {
   if (!timeStr) return null;
-  const clean = timeStr.trim().replace(/\s+/g, '');
-  const match = clean.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+  const clean = timeStr.trim().toLowerCase().replace(/\s+/g, '');
+  const match = clean.match(/^(\d{1,2}):(\d{2})(am|pm)$/);
   if (!match) return null;
   let h = parseInt(match[1]);
   const m = parseInt(match[2]);
-  const ap = match[3].toLowerCase();
-  if (ap === 'pm' && h !== 12) h += 12;
-  if (ap === 'am' && h === 12) h = 0;
-  const now = new Date();
-  const t = new Date(now);
+  if (match[3] === 'pm' && h !== 12) h += 12;
+  if (match[3] === 'am' && h === 12) h = 0;
+  const t = new Date();
   t.setHours(h, m, 0, 0);
-  if (t.getTime() < now.getTime() - 2 * 60 * 60 * 1000) t.setDate(t.getDate() + 1);
+  if (t.getTime() < Date.now() - 2 * 3600000) t.setDate(t.getDate() + 1);
   return t.getTime();
 }
 
-// Fandango returns times in various formats — normalize them
-function normalizeFandangoTime(raw) {
-  if (!raw) return null;
-  // ISO format: "2025-03-16T19:30:00"
-  if (raw.includes('T')) {
-    const d = new Date(raw);
-    if (isNaN(d)) return null;
-    let h = d.getHours(), m = d.getMinutes();
-    const ap = h >= 12 ? 'pm' : 'am';
-    if (h > 12) h -= 12;
-    if (h === 0) h = 12;
-    return `${h}:${String(m).padStart(2, '0')}${ap}`;
-  }
-  // Already "7:30pm" style
-  return raw.toLowerCase().replace(' ', '');
-}
-
-// ─── Fandango theater page scraper ──────────────────────────────────────────
-// Fetches a specific theater's page and parses embedded Next.js data
-async function fetchFandango(theater) {
-  if (!theater.fandango_id) return null;
-  const url = `https://www.fandango.com/${theater.fandango_id}/theater-page`;
-  let html;
-  try {
-    const res = await axios.get(url, {
-      headers: { 'User-Agent': UA, Accept: 'text/html' },
-      timeout: 15000,
-    });
-    html = res.data;
-  } catch (e) {
-    console.error(`[fandango] fetch failed for ${theater.name}:`, e.message);
-    return null;
-  }
-
+// ── Nitehawk (Prospect Park + Williamsburg — same site structure) ─────────────
+async function fetchNitehawk(theater) {
+  const { data: html } = await axios.get(theater.scrape_url, {
+    headers: { 'User-Agent': UA },
+    timeout: 12000,
+  });
   const $ = cheerio.load(html);
-  const raw = $('script#__NEXT_DATA__').html();
-  if (!raw) {
-    console.error(`[fandango] no __NEXT_DATA__ for ${theater.name}`);
-    return null;
-  }
-
-  let data;
-  try { data = JSON.parse(raw); } catch { return null; }
-
-  const pp = data?.props?.pageProps;
-  // Fandango nests showtimes in different places depending on page version
-  const showings =
-    pp?.movieShowtimesByDate?.[0]?.movies ||
-    pp?.theater?.movieShowtimes ||
-    pp?.movieShowtimes ||
-    pp?.showtimes ||
-    [];
-
-  if (!showings.length) {
-    console.error(`[fandango] no showings found in data for ${theater.name}`);
-    return null;
-  }
-
-  return showings.map(m => ({
-    title: m.movieName || m.movie?.name || m.name || 'Unknown',
-    link: m.movieUrl ? `https://www.fandango.com${m.movieUrl}` : theater.link,
-    times: (m.showtimes || m.performanceTimes || m.times || [])
-      .map(t => {
-        const raw = t.performanceDateTime || t.showtime || t.time || t;
-        const display = normalizeFandangoTime(typeof raw === 'string' ? raw : String(raw));
-        return { display, timestamp: parseShowtime(display) };
-      })
-      .filter(t => t.timestamp !== null),
-  })).filter(m => m.times.length > 0);
-}
-
-// ─── Alamo Drafthouse API ────────────────────────────────────────────────────
-async function fetchAlamo(theater) {
-  const today = new Date().toISOString().slice(0, 10);
-  const url = `https://drafthouse.com/s/mother/v1/calendar/market/${theater.alamo_market}/cinema/${theater.alamo_cinema}/date/${today}`;
-  let data;
-  try {
-    const res = await axios.get(url, { headers: { 'User-Agent': UA }, timeout: 10000 });
-    data = res.data;
-  } catch (e) {
-    console.error(`[alamo] fetch failed:`, e.message);
-    return null;
-  }
-
-  // Alamo's API has shifted structure over versions — try common paths
-  const presentations =
-    data?.data?.presentations ||
-    data?.Calendar?.Presentations ||
-    data?.data?.Calendar?.Presentations ||
-    [];
-
   const movies = {};
-  for (const p of presentations) {
-    const title = p.Film?.FilmName || p.FilmName || p.name;
-    const timeStr = p.PerformanceTime || p.ShowtimePretty || p.time;
-    if (!title || !timeStr) continue;
-    const ts = parseShowtime(timeStr);
-    if (!ts) continue;
-    if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
-    movies[title].times.push({ display: timeStr.toLowerCase().replace(' ', ''), timestamp: ts });
-  }
-  return Object.values(movies).filter(m => m.times.length > 0);
-}
 
-// ─── Metrograph (own website, not on Fandango) ───────────────────────────────
-async function fetchMetrograph(theater) {
-  let html;
-  try {
-    const res = await axios.get('https://metrograph.com/calendar/', {
-      headers: { 'User-Agent': UA },
-      timeout: 12000,
-    });
-    html = res.data;
-  } catch (e) {
-    console.error(`[metrograph] fetch failed:`, e.message);
-    return null;
-  }
-
-  const $ = cheerio.load(html);
-
-  // Try __NEXT_DATA__ first (Metrograph is Next.js)
-  const raw = $('script#__NEXT_DATA__').html();
-  if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      const films = data?.props?.pageProps?.films || data?.props?.pageProps?.events || [];
-      if (films.length) {
-        const movies = {};
-        for (const f of films) {
-          const title = f.title || f.name;
-          const times = f.showtimes || f.performances || f.screenings || [];
-          if (!title || !times.length) continue;
-          for (const t of times) {
-            const raw = t.datetime || t.time || t.starts_at;
-            const display = normalizeFandangoTime(typeof raw === 'string' ? raw : '');
-            const ts = parseShowtime(display);
-            if (!ts) continue;
-            if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
-            movies[title].times.push({ display, timestamp: ts });
-          }
-        }
-        const results = Object.values(movies).filter(m => m.times.length > 0);
-        if (results.length) return results;
-      }
-    } catch {}
-  }
-
-  // Fallback: parse HTML directly
-  const movies = {};
-  $('article, .film, .event, .screening').each((_, el) => {
-    const title = $(el).find('h1, h2, h3, .title').first().text().trim();
+  // Each film is an <li> with an <h3> child for the title.
+  // Showtimes are nested <li> elements within that same <li>.
+  $('li').each((_, el) => {
+    const $el = $(el);
+    const title = $el.children('h3').first().text().trim();
     if (!title) return;
-    $(el).find('time, .showtime, .time').each((_, timeEl) => {
-      const timeStr = $(timeEl).attr('datetime') || $(timeEl).text().trim();
-      const display = normalizeFandangoTime(timeStr);
-      const ts = parseShowtime(display || timeStr);
+    $el.find('li').each((_, timeEl) => {
+      const text = $(timeEl).text().trim();
+      const match = text.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+      if (!match) return;
+      const display = match[1].toLowerCase().replace(/\s+/g, '');
+      const ts = parseShowtime(display);
       if (!ts) return;
       if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
-      movies[title].times.push({ display: display || timeStr, timestamp: ts });
+      movies[title].times.push({ display, timestamp: ts });
     });
   });
+
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
-// ─── Theater registry ────────────────────────────────────────────────────────
+// ── Film Forum (JSON-LD ScreeningEvent data) ─────────────────────────────────
+async function fetchFilmForum(theater) {
+  const { data: html } = await axios.get('https://filmforum.org/', {
+    headers: { 'User-Agent': UA },
+    timeout: 12000,
+  });
+  const $ = cheerio.load(html);
+  const today = new Date();
+  const movies = {};
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    try {
+      const raw = $(el).html();
+      const data = JSON.parse(raw);
+      const items = Array.isArray(data) ? data : (data['@graph'] || [data]);
+      for (const item of items) {
+        if (item['@type'] !== 'ScreeningEvent') continue;
+        const title = item.name || item.workPresented?.name;
+        if (!title) continue;
+        const d = new Date(item.startDate);
+        if (isNaN(d)) continue;
+        // Only today's screenings
+        if (d.getDate() !== today.getDate() ||
+            d.getMonth() !== today.getMonth() ||
+            d.getFullYear() !== today.getFullYear()) continue;
+        let h = d.getHours();
+        const m = d.getMinutes();
+        const ap = h >= 12 ? 'pm' : 'am';
+        if (h > 12) h -= 12;
+        if (h === 0) h = 12;
+        const display = `${h}:${String(m).padStart(2, '0')}${ap}`;
+        const ts = parseShowtime(display);
+        if (!ts) continue;
+        if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+        movies[title].times.push({ display, timestamp: ts });
+      }
+    } catch {}
+  });
+
+  return Object.values(movies).filter(m => m.times.length > 0);
+}
+
+// ── IFC Center (WordPress site, ticket links contain times) ──────────────────
+async function fetchIFC(theater) {
+  const { data: html } = await axios.get('https://www.ifccenter.com/', {
+    headers: { 'User-Agent': UA },
+    timeout: 12000,
+  });
+  const $ = cheerio.load(html);
+  const movies = {};
+
+  // IFC: ticket links href="https://tickets.ifccenter.com/..."
+  // text of each link is the showtime. The nearest h3/h4 is the film title.
+  $('a[href*="tickets.ifccenter.com"]').each((_, linkEl) => {
+    const timeText = $(linkEl).text().trim();
+    const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+    if (!match) return;
+
+    // Walk up DOM to find the enclosing film block, then grab its heading
+    const $block = $(linkEl).closest('.wp-block-group, article, section, .film-block');
+    let title = $block.find('h3, h4').first().text().trim();
+
+    // Fallback: look for any preceding h3/h4 sibling in the parent
+    if (!title) {
+      title = $(linkEl).parentsUntil('body').find('h3, h4').first().text().trim();
+    }
+    if (!title) return;
+
+    const display = match[1].toLowerCase().replace(/\s+/g, '');
+    const ts = parseShowtime(display);
+    if (!ts) return;
+    if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+    movies[title].times.push({ display, timestamp: ts });
+  });
+
+  return Object.values(movies).filter(m => m.times.length > 0);
+}
+
+// ── Metrograph ───────────────────────────────────────────────────────────────
+async function fetchMetrograph(theater) {
+  const { data: html } = await axios.get('https://metrograph.com/calendar/', {
+    headers: { 'User-Agent': UA },
+    timeout: 12000,
+  });
+  const $ = cheerio.load(html);
+  const movies = {};
+
+  // Metrograph: h4 is the film title; nearby links to t.metrograph.com are ticketed showtimes.
+  // Walk each ticket link, walk up to find its parent block, get the h4.
+  $('a[href*="t.metrograph.com"]').each((_, linkEl) => {
+    const timeText = $(linkEl).text().trim();
+    const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+    if (!match) return;
+
+    const $parent = $(linkEl).closest('article, section, .film, .event, div[class]');
+    let title = $parent.find('h4').first().text().trim();
+    if (!title) {
+      title = $(linkEl).closest('*').prevAll('h4').first().text().trim();
+    }
+    if (!title) return;
+
+    const display = match[1].toLowerCase().replace(/\s+/g, '');
+    const ts = parseShowtime(display);
+    if (!ts) return;
+    if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+    movies[title].times.push({ display, timestamp: ts });
+  });
+
+  return Object.values(movies).filter(m => m.times.length > 0);
+}
+
+// ── Anthology Film Archives ──────────────────────────────────────────────────
+async function fetchAnthology(theater) {
+  const today = new Date();
+  const y = today.getFullYear();
+  const mo = String(today.getMonth() + 1).padStart(2, '0');
+  const { data: html } = await axios.get(
+    `https://anthologyfilmarchives.org/film_screenings/calendar?month=${y}-${mo}`,
+    { headers: { 'User-Agent': UA }, timeout: 12000 }
+  );
+  const $ = cheerio.load(html);
+  const movies = {};
+  const todayDay = today.getDate();
+
+  // Calendar table: each td/cell represents one day.
+  // Find today's cell by looking for a date number matching today.
+  $('td').each((_, cell) => {
+    const dayNum = parseInt($(cell).find('.day-number, strong, .date').first().text().trim());
+    if (dayNum !== todayDay) return;
+
+    // Film links use href containing "showing-"
+    $(cell).find('a[href*="showing-"]').each((_, linkEl) => {
+      const title = $(linkEl).text().trim();
+      if (!title) return;
+      // The time appears as a text node before or near the link
+      const liText = $(linkEl).closest('li').text().trim();
+      const match = liText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+      if (!match) return;
+      const display = match[1].toLowerCase().replace(/\s+/g, '');
+      const ts = parseShowtime(display);
+      if (!ts) return;
+      if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+      movies[title].times.push({ display, timestamp: ts });
+    });
+  });
+
+  return Object.values(movies).filter(m => m.times.length > 0);
+}
+
+// ── Theater registry ─────────────────────────────────────────────────────────
 const THEATERS = [
   {
-    id: 'bam',
-    name: 'BAM Rose Cinemas',
-    address: '30 Lafayette Ave, Brooklyn, NY 11217',
-    lat: 40.6862, lng: -73.9773,
-    chain: null, preshow_minutes: 10,
-    link: 'https://www.bam.org/films',
-    fandango_id: 'bam-rose-cinemas-aabwn',
-  },
-  {
-    id: 'alamo',
-    name: 'Alamo Drafthouse Brooklyn',
-    address: '445 Albee Square W, Brooklyn, NY 11201',
-    lat: 40.6922, lng: -73.9862,
-    chain: 'Alamo Drafthouse', preshow_minutes: 15,
-    link: 'https://drafthouse.com/new-york',
-    alamo_market: '0008',
-    alamo_cinema: '0523',
-    fetch: fetchAlamo,
-  },
-  {
-    id: 'amc-atlantic',
-    name: 'AMC Atlantic Terminal 16',
-    address: '139 Flatbush Ave, Brooklyn, NY 11217',
-    lat: 40.6843, lng: -73.9773,
-    chain: 'AMC', preshow_minutes: 25,
-    link: 'https://www.amctheatres.com/movie-theatres/new-york/amc-atlantic-terminal-16',
-    fandango_id: 'amc-atlantic-terminal-16-aaefr',
-  },
-  {
-    id: 'nitehawk',
+    id: 'nitehawk-pp',
     name: 'Nitehawk Cinema Prospect Park',
     address: '188 Prospect Park SW, Brooklyn, NY 11218',
     lat: 40.6595, lng: -73.9777,
-    chain: null, preshow_minutes: 10,
-    link: 'https://nitehawkcinema.com',
-    fandango_id: 'nitehawk-cinema-prospect-park-aankf',
+    preshow_minutes: 10, chain: null,
+    link: 'https://nitehawkcinema.com/prospectpark/',
+    scrape_url: 'https://nitehawkcinema.com/prospectpark/',
+    fetch: fetchNitehawk,
   },
   {
-    id: 'ifc',
-    name: 'IFC Center',
-    address: '323 Sixth Ave, New York, NY 10014',
-    lat: 40.7330, lng: -74.0026,
-    chain: null, preshow_minutes: 10,
-    link: 'https://www.ifccenter.com',
-    fandango_id: 'ifc-center-aaevw',
+    id: 'nitehawk-wburg',
+    name: 'Nitehawk Cinema Williamsburg',
+    address: '136 Metropolitan Ave, Brooklyn, NY 11249',
+    lat: 40.7143, lng: -73.9614,
+    preshow_minutes: 10, chain: null,
+    link: 'https://nitehawkcinema.com/williamsburg/',
+    scrape_url: 'https://nitehawkcinema.com/williamsburg/',
+    fetch: fetchNitehawk,
   },
   {
     id: 'film-forum',
     name: 'Film Forum',
     address: '209 W Houston St, New York, NY 10014',
     lat: 40.7282, lng: -74.0043,
-    chain: null, preshow_minutes: 5,
+    preshow_minutes: 5, chain: null,
     link: 'https://filmforum.org',
-    fandango_id: 'film-forum-aafsh',
+    fetch: fetchFilmForum,
+  },
+  {
+    id: 'ifc',
+    name: 'IFC Center',
+    address: '323 Sixth Ave, New York, NY 10014',
+    lat: 40.7330, lng: -74.0026,
+    preshow_minutes: 10, chain: null,
+    link: 'https://www.ifccenter.com',
+    fetch: fetchIFC,
   },
   {
     id: 'metrograph',
     name: 'Metrograph',
     address: '7 Ludlow St, New York, NY 10002',
     lat: 40.7150, lng: -73.9900,
-    chain: null, preshow_minutes: 5,
+    preshow_minutes: 5, chain: null,
     link: 'https://metrograph.com',
     fetch: fetchMetrograph,
   },
   {
-    id: 'amc-empire',
-    name: 'AMC Empire 25',
-    address: '234 W 42nd St, New York, NY 10036',
-    lat: 40.7566, lng: -73.9889,
-    chain: 'AMC', preshow_minutes: 25,
-    link: 'https://www.amctheatres.com/movie-theatres/new-york/amc-empire-25',
-    fandango_id: 'amc-empire-25-aaefc',
-  },
-  {
-    id: 'regal-union',
-    name: 'Regal Union Square',
-    address: '850 Broadway, New York, NY 10003',
-    lat: 40.7357, lng: -73.9904,
-    chain: 'Regal', preshow_minutes: 20,
-    link: 'https://www.regmovies.com/theaters/regal-union-square/1187',
-    fandango_id: 'regal-union-square-with-rpx-aahze',
-  },
-  {
-    id: 'angelika',
-    name: 'Angelika Film Center',
-    address: '18 W Houston St, New York, NY 10012',
-    lat: 40.7254, lng: -73.9989,
-    chain: null, preshow_minutes: 10,
-    link: 'https://www.angelikafilmcenter.com/nyc',
-    fandango_id: 'angelika-film-center-aaevv',
+    id: 'anthology',
+    name: 'Anthology Film Archives',
+    address: '32 Second Ave, New York, NY 10003',
+    lat: 40.7242, lng: -73.9892,
+    preshow_minutes: 5, chain: null,
+    link: 'https://anthologyfilmarchives.org',
+    fetch: fetchAnthology,
   },
 ];
 
+// ── Handler ───────────────────────────────────────────────────────────────────
 module.exports = async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
@@ -295,39 +273,33 @@ module.exports = async (req, res) => {
   const userLat = parseFloat(lat);
   const userLng = parseFloat(lng);
 
-  // All theaters, sorted by distance from user
-  const nearby = THEATERS
+  const sorted = THEATERS
     .map(t => ({ ...t, distance_miles: distanceMiles(userLat, userLng, t.lat, t.lng) }))
     .sort((a, b) => a.distance_miles - b.distance_miles);
 
-  // Fetch all theaters in parallel
-  const results = await Promise.all(nearby.map(async theater => {
-    try {
-      let movies;
-      if (theater.fetch) {
-        movies = await theater.fetch(theater);
-      } else if (theater.fandango_id) {
-        movies = await fetchFandango(theater);
-      }
-      if (!movies || movies.length === 0) return null;
-      return {
-        name: theater.name,
-        address: theater.address,
-        distance_miles: theater.distance_miles,
-        link: theater.link,
-        chain: theater.chain,
-        preshow_minutes: theater.preshow_minutes,
-        movies,
-      };
-    } catch (e) {
-      console.error(`[showtimes] ${theater.name} failed:`, e.message);
-      return null;
-    }
+  const results = await Promise.allSettled(sorted.map(async theater => {
+    const movies = await theater.fetch(theater);
+    if (!movies || movies.length === 0) return null;
+    return {
+      name: theater.name,
+      address: theater.address,
+      distance_miles: theater.distance_miles,
+      link: theater.link,
+      chain: theater.chain,
+      preshow_minutes: theater.preshow_minutes,
+      movies,
+    };
   }));
 
-  const theaters = results.filter(Boolean);
-  if (theaters.length === 0) {
-    return res.json({ theaters: [], note: 'No showtimes available. Check server logs for details.' });
-  }
+  const theaters = results
+    .map((r, i) => {
+      if (r.status === 'rejected') {
+        console.error(`[${sorted[i].id}] failed:`, r.reason?.message);
+        return null;
+      }
+      return r.value;
+    })
+    .filter(Boolean);
+
   res.json({ theaters });
 };
