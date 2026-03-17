@@ -622,9 +622,10 @@ function renderResults({ entries, updatedAt }) {
     ...computeStatus(e.showtime, e.transitMins, e.preshow),
   }));
 
-  const catchable = live.filter((e) => e.status === 'catchable').sort((a, b) => a.showtime - b.showtime);
-  const close     = live.filter((e) => e.status === 'close')    .sort((a, b) => a.showtime - b.showtime);
-  const late      = live.filter((e) => e.status === 'too-late') .sort((a, b) => a.showtime - b.showtime);
+  const now90 = Date.now();
+  const catchable = live.filter((e) => e.status === 'catchable' && e.showtime <= now90 + 90 * 60000).sort((a, b) => a.showtime - b.showtime);
+  const close     = live.filter((e) => e.status === 'close')                                        .sort((a, b) => a.showtime - b.showtime);
+  const late      = live.filter((e) => e.status === 'too-late' && e.showtime >= now90 - 30 * 60000) .sort((a, b) => a.showtime - b.showtime);
 
   let html = '';
 
