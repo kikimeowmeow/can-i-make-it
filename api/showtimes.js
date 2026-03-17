@@ -116,7 +116,7 @@ async function fetchFilmForum(theater) {
     return { h24: h, ap: 'am' }; // 10 or 11
   }
 
-  $tab.find('a[href*="/films/"]').each((_, linkEl) => {
+  $tab.find('a[href*="/film/"]').each((_, linkEl) => {
     const title = $(linkEl).text().trim();
     if (!title || title.length < 2) return;
 
