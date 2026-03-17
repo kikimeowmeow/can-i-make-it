@@ -316,6 +316,8 @@
       border: 1px solid #c4b5e8;
       letter-spacing: 0.04em;
     }
+    .ss-mini { display: none; }
+    .ss-full { display: inline; }
     .oc-badge {
       font-family: var(--font-mono);
       font-size: 10px;
@@ -545,7 +547,9 @@
       .address-input { font-size: 16px; }
 
       /* Declutter badges on mobile */
-      .screenslate-badge { display: none; }
+      .screenslate-badge { padding: 1px 4px; }
+      .ss-full { display: none; }
+      .ss-mini { display: inline; font-weight: 600; }
       .preshow-long { display: none; }
 
       /* Location label moves into search row on mobile */
@@ -932,7 +936,7 @@ function renderCard(e) {
 
   const chainBadge = chain ? `<span class="chain-badge">${chain}</span>` : '';
   const preshowBadge = preshow > 0 ? `<span class="preshow-badge">+${preshow}min<span class="preshow-long"> trailers</span></span>` : '';
-  const ssBadge = source === 'screenslate' ? `<span class="screenslate-badge">Screen Slate</span>` : '';
+  const ssBadge = source === 'screenslate' ? `<span class="screenslate-badge"><span class="ss-full">Screen Slate</span><span class="ss-mini">S</span></span>` : '';
   const ocBadge = oc ? `<span class="oc-badge">OC</span>` : '';
   const actualStartNote = preshow > 0 ? `Movie starts ${fmt(actualStartMs)}` : `Starts ${fmt(actualStartMs)}`;
 
