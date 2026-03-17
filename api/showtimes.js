@@ -99,8 +99,8 @@ async function fetchNitehawk(theater) {
 }
 
 // ── Film Forum ────────────────────────────────────────────────────────────────
-// Tabs: #tabs-0 = Mon … #tabs-6 = Sun (fixed, not rolling from today).
-// Times are bare like "12:30 3:00 5:30 8:00" — no AM/PM in the HTML.
+// Tabs are rolling from today: #tabs-0 = today, #tabs-1 = tomorrow, etc.
+// Times are in <span> tags inside <p> blocks, no AM/PM.
 async function fetchFilmForum(theater) {
   const { data: html } = await axios.get('https://filmforum.org/', {
     headers: { 'User-Agent': UA },
@@ -109,14 +109,10 @@ async function fetchFilmForum(theater) {
   const $ = cheerio.load(html);
   const movies = {};
 
-  const DAY_MAP = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
-  const dayAbbr = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', weekday: 'short',
-  }).format(new Date());
-  const tabIdx = DAY_MAP[dayAbbr] ?? 0;
-  const $tab = $(`#tabs-${tabIdx}`);
+  // tabs-0 is always today regardless of day of week
+  const $tab = $('#tabs-0');
   if (!$tab.length) {
-    console.error('[filmforum] tab not found for', dayAbbr, tabIdx);
+    console.error('[filmforum] #tabs-0 not found');
     return [];
   }
 
@@ -654,7 +650,7 @@ const THEATERS = [
     name: 'Alamo Drafthouse Brooklyn',
     address: '445 Albee Square W, Brooklyn, NY 11201',
     lat: 40.6920, lng: -73.9871,
-    preshow_minutes: 15, chain: 'Alamo',
+    preshow_minutes: 15, chain: null,
     link: 'https://drafthouse.com/brooklyn',
     cinema_id: '2101',
     fetch: fetchAlamo,
