@@ -868,7 +868,7 @@ function renderResults({ entries, updatedAt, apiErrors = [] }) {
   }));
 
   const nowMs     = Date.now();
-  const catchable  = live.filter((e) => e.status === 'catchable' && e.showtime <= nowMs + 90 * 60000).sort((a, b) => a.showtime - b.showtime);
+  const catchable  = live.filter((e) => e.status === 'catchable' && e.showtime <= nowMs + 90 * 60000).sort((a, b) => a.leaveByMs - b.leaveByMs);
   const close      = live.filter((e) => e.status === 'close')                                        .sort((a, b) => a.showtime - b.showtime);
   const cantMake   = live.filter((e) => e.status === 'too-late' && e.bufferMins >= -30).sort((a, b) => a.showtime - b.showtime);
 
