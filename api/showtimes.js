@@ -56,32 +56,44 @@ function isNYCToday(dateObj) {
   return fmt(dateObj) === fmt(new Date());
 }
 
-// ── Nitehawk (Prospect Park + Williamsburg — same site structure) ─────────────
+// ── Nitehawk (Prospect Park + Williamsburg) ───────────────────────────────────
+// Uses the Filmbot/Nightjar REST API: /wp-json/nj/v1/showtime/listings
+// Response: { movies: [{movie_id, movie_name}], showtimes: [{movie_id, datetime, purchase_url}] }
+// datetime format: "YYYYMMDDHHmmss" in America/New_York time
 async function fetchNitehawk(theater) {
-  const { data: html } = await axios.get(theater.scrape_url, {
-    headers: { 'User-Agent': UA },
-    timeout: 12000,
-  });
-  const $ = cheerio.load(html);
-  const movies = {};
+  const { data } = await axios.get(
+    `${theater.api_base}/wp-json/nj/v1/showtime/listings`,
+    { headers: { 'User-Agent': UA }, timeout: 12000 }
+  );
 
-  // Each film is an <li> with an <h3> child for the title.
-  // Showtimes are nested <li> elements within that same <li>.
-  $('li').each((_, el) => {
-    const $el = $(el);
-    const title = $el.children('h3').first().text().trim();
-    if (!title) return;
-    $el.find('li').each((_, timeEl) => {
-      const text = $(timeEl).text().trim();
-      const match = text.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
-      if (!match) return;
-      const display = match[1].toLowerCase().replace(/\s+/g, '');
-      const ts = parseShowtime(display);
-      if (!ts) return;
-      if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+  // Today's date in NYC as "YYYYMMDD" for filtering
+  const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+    .format(new Date()).replace(/-/g, '');
+
+  // Build movie_id → name lookup
+  const movieMap = {};
+  for (const m of data.movies || []) movieMap[m.movie_id] = m.movie_name;
+
+  const movies = {};
+  for (const st of data.showtimes || []) {
+    if (!st.datetime || st.datetime.slice(0, 8) !== todayNYC) continue;
+    const title = movieMap[st.movie_id];
+    if (!title) continue;
+
+    // datetime "20260316213000" → NYC local 21:30 → 9:30pm
+    const h = parseInt(st.datetime.slice(8, 10));
+    const min = parseInt(st.datetime.slice(10, 12));
+    const ampm = h >= 12 ? 'pm' : 'am';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    const display = `${h12}:${String(min).padStart(2, '0')}${ampm}`;
+    const ts = parseShowtime(display);
+    if (!ts) continue;
+
+    if (!movies[title]) movies[title] = { title, link: st.purchase_url || theater.link, times: [] };
+    if (!movies[title].times.find(t => t.timestamp === ts)) {
       movies[title].times.push({ display, timestamp: ts });
-    });
-  });
+    }
+  }
 
   return Object.values(movies).filter(m => m.times.length > 0);
 }
@@ -310,38 +322,62 @@ async function fetchFilmLinc(theater) {
 }
 
 // ── Anthology Film Archives ──────────────────────────────────────────────────
+// List view has h3 date headers ("Monday, March 16") followed by <li> entries:
+//   <li>7:00 PM <a href="/film_screenings/...#showing-XXXXX">FILM TITLE</a></li>
 async function fetchAnthology(theater) {
-  const today = new Date();
-  const y = today.getFullYear();
-  const mo = String(today.getMonth() + 1).padStart(2, '0');
+  const now = new Date();
+  const nyParts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      month: 'numeric', year: 'numeric',
+    }).formatToParts(now).map(p => [p.type, p.value])
+  );
+  const nyMonth = nyParts.month.padStart(2, '0');
+  const nyYear = nyParts.year;
+
   const { data: html } = await axios.get(
-    `https://anthologyfilmarchives.org/film_screenings/calendar?month=${y}-${mo}`,
+    `https://anthologyfilmarchives.org/film_screenings/calendar?view=list&month=${nyMonth}&year=${nyYear}`,
     { headers: { 'User-Agent': UA }, timeout: 12000 }
   );
   const $ = cheerio.load(html);
   const movies = {};
-  const todayDay = today.getDate();
 
-  // Calendar table: each td/cell represents one day.
-  // Find today's cell by looking for a date number matching today.
-  $('td').each((_, cell) => {
-    const dayNum = parseInt($(cell).find('.day-number, strong, .date').first().text().trim());
-    if (dayNum !== todayDay) return;
+  // Build today's header string: "Monday, March 16"
+  const todayHeader = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric',
+  }).format(now);
 
-    // Film links use href containing "showing-"
-    $(cell).find('a[href*="showing-"]').each((_, linkEl) => {
-      const title = $(linkEl).text().trim();
-      if (!title) return;
-      // The time appears as a text node before or near the link
-      const liText = $(linkEl).closest('li').text().trim();
-      const match = liText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
-      if (!match) return;
-      const display = match[1].toLowerCase().replace(/\s+/g, '');
-      const ts = parseShowtime(display);
-      if (!ts) return;
-      if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+  const $todayH3 = $('h3').filter((_, el) =>
+    $(el).text().trim() === todayHeader
+  ).first();
+
+  if (!$todayH3.length) {
+    const found = $('h3').map((_, el) => $(el).text().trim()).get().slice(0, 5);
+    console.error('[anthology] today header not found, looked for:', todayHeader, '| sample:', found.join(' | '));
+    return [];
+  }
+
+  const $todaySection = $todayH3.nextUntil('h3');
+
+  $todaySection.find('a').each((_, linkEl) => {
+    const href = $(linkEl).attr('href') || '';
+    if (!href.includes('showing-') && !href.includes('film_screenings')) return;
+    const title = $(linkEl).text().trim();
+    if (!title || title.length < 2) return;
+
+    // Time is a plain text node in the same <li> before the link
+    const liText = $(linkEl).closest('li').text().trim();
+    const match = liText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+    if (!match) return;
+    const display = match[1].toLowerCase().replace(/\s+/g, '');
+    const ts = parseShowtime(display);
+    if (!ts) return;
+
+    const filmUrl = href.startsWith('http') ? href : `https://anthologyfilmarchives.org${href}`;
+    if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
+    if (!movies[title].times.find(t => t.timestamp === ts)) {
       movies[title].times.push({ display, timestamp: ts });
-    });
+    }
   });
 
   return Object.values(movies).filter(m => m.times.length > 0);
@@ -356,7 +392,7 @@ const THEATERS = [
     lat: 40.6595, lng: -73.9777,
     preshow_minutes: 10, chain: null,
     link: 'https://nitehawkcinema.com/prospectpark/',
-    scrape_url: 'https://nitehawkcinema.com/prospectpark/',
+    api_base: 'https://nitehawkcinema.com/prospectpark',
     fetch: fetchNitehawk,
   },
   {
@@ -366,7 +402,7 @@ const THEATERS = [
     lat: 40.7143, lng: -73.9614,
     preshow_minutes: 10, chain: null,
     link: 'https://nitehawkcinema.com/williamsburg/',
-    scrape_url: 'https://nitehawkcinema.com/williamsburg/',
+    api_base: 'https://nitehawkcinema.com/williamsburg',
     fetch: fetchNitehawk,
   },
   {
