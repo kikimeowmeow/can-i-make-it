@@ -277,21 +277,16 @@ async function fetchAlamo(theater) {
   const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
     .format(new Date()); // "2026-03-16"
 
+  // Date field is a long string ("Monday, March 16, 2026") — don't rely on it.
+  // Instead filter at the session level using SessionDateTime which is ISO format.
   const dates = data?.Market?.Dates || [];
-  const todayEntry = dates.find(d => d.Date === todayNYC);
-  if (!todayEntry) {
-    console.error('[alamo] today not found in feed:', todayNYC);
-    return [];
-  }
-
-  const cinema = (todayEntry.Cinemas || []).find(c => c.CinemaId === theater.cinema_id);
-  if (!cinema) {
-    console.error('[alamo] cinema not found:', theater.cinema_id);
-    return [];
-  }
-
   const movies = {};
-  for (const film of cinema.Films || []) {
+
+  for (const dateEntry of dates) {
+    const cinema = (dateEntry.Cinemas || []).find(c => c.CinemaId === theater.cinema_id);
+    if (!cinema) continue;
+
+    for (const film of cinema.Films || []) {
     const title = film.FilmName;
     const filmUrl = `https://drafthouse.com/nyc/show/${film.FilmSlug}`;
 
@@ -300,7 +295,8 @@ async function fetchAlamo(theater) {
         for (const session of format.Sessions || []) {
           if (session.SessionStatus === 'past') continue;
 
-          // SessionDateTime: "2026-03-16T22:30:00" — NYC local time
+          // SessionDateTime: "2026-03-16T22:30:00" — NYC local time; filter to today
+          if (!(session.SessionDateTime || '').startsWith(todayNYC)) continue;
           const dtMatch = (session.SessionDateTime || '').match(/T(\d{2}):(\d{2})/);
           if (!dtMatch) continue;
           const h = parseInt(dtMatch[1]), min = parseInt(dtMatch[2]);
@@ -319,6 +315,7 @@ async function fetchAlamo(theater) {
       }
     }
   }
+  } // end dateEntry loop
 
   return Object.values(movies).filter(m => m.times.length > 0);
 }
