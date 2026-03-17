@@ -755,8 +755,7 @@ function renderResults({ entries, updatedAt }) {
   const nowMs     = Date.now();
   const catchable  = live.filter((e) => e.status === 'catchable' && e.showtime <= nowMs + 90 * 60000).sort((a, b) => a.showtime - b.showtime);
   const close      = live.filter((e) => e.status === 'close')                                        .sort((a, b) => a.showtime - b.showtime);
-  const cantMake   = live.filter((e) => e.status === 'too-late' && e.showtime >= nowMs)              .sort((a, b) => a.showtime - b.showtime);
-  const late       = live.filter((e) => e.status === 'too-late' && e.showtime < nowMs && e.showtime >= nowMs - 30 * 60000).sort((a, b) => a.showtime - b.showtime);
+  const cantMake   = live.filter((e) => e.status === 'too-late').sort((a, b) => a.showtime - b.showtime);
 
   let html = '';
 
@@ -764,7 +763,7 @@ function renderResults({ entries, updatedAt }) {
     <div class="summary-bar">
       <div class="summary-pill"><span class="dot dot-green"></span>${pluralize(catchable.length, 'movie')} catchable</div>
       <div class="summary-pill"><span class="dot dot-yellow"></span>${pluralize(close.length, 'movie')} close</div>
-      <div class="summary-pill"><span class="dot dot-red"></span>${pluralize(cantMake.length + late.length, 'movie')} won't make</div>
+      <div class="summary-pill"><span class="dot dot-red"></span>${pluralize(cantMake.length, 'movie')} won't make</div>
       <div class="summary-updated">Updated ${fmt(updatedAt)}</div>
     </div>`;
 
@@ -788,13 +787,6 @@ function renderResults({ entries, updatedAt }) {
     html += `<div class="section-block">
       <div class="section-heading">Can't Make It</div>`;
     cantMake.forEach((e) => { html += renderCard(e); });
-    html += `</div>`;
-  }
-
-  if (late.length > 0) {
-    html += `<div class="section-block">
-      <div class="section-heading">Already Started</div>`;
-    late.forEach((e) => { html += renderCard(e); });
     html += `</div>`;
   }
 
