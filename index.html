@@ -503,11 +503,64 @@
       border: 1px dashed var(--border);
     }
 
+    /* ── Mobile location label (hidden on desktop) ─────────────────────────── */
+    .mobile-location-label {
+      display: none;
+    }
+
     /* ── Responsive ────────────────────────────────────────────────────────── */
     @media (max-width: 540px) {
-      .card { grid-template-columns: 1fr; }
-      .card-right { text-align: left; display: flex; align-items: center; gap: 12px; }
+      /* Header — tighten up so nothing overflows */
+      header { padding: 0 16px; }
+      .header-top { gap: 10px; padding: 10px 0 8px; }
+      .logo { font-size: 20px; }
+      #locationLabel { display: none; } /* shown in search row instead */
+      .header-right { gap: 10px; }
+      #clockDisplay { font-size: 12px; }
+      .refresh-label { display: none; } /* icon-only on mobile */
+      .refresh-btn { padding: 6px 8px; }
+
+      /* Search row */
+      .header-search { flex-wrap: wrap; gap: 6px; }
+      .header-search-input { font-size: 12px; }
+
+      /* Location label moves into search row on mobile */
+      .mobile-location-label {
+        display: block;
+        width: 100%;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding-bottom: 2px;
+      }
+      .mobile-location-label:empty { display: none; }
+
+      /* Main layout */
+      main { padding: 20px 16px 80px; }
+
+      /* Summary bar */
+      .summary-bar { gap: 4px 14px; font-size: 10px; }
+      .summary-updated { margin-left: 0; width: 100%; }
+
+      /* Cards — stack vertically, allow title to wrap */
+      .card { grid-template-columns: 1fr; gap: 8px; padding: 12px 0; }
+      .card-title { font-size: 16px; white-space: normal; line-height: 1.25; }
+      .card-right { text-align: left; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .showtime-big { font-size: 20px; }
       .actual-start { margin-bottom: 0; }
+      .card-meta { font-size: 10px; gap: 3px 8px; }
+      .card-footer { font-size: 10px; }
+
+      /* Section headings */
+      .section-heading { font-size: 9px; }
+
+      /* Status badge smaller */
+      .status-badge { font-size: 9px; padding: 2px 6px; }
     }
   </style>
 </head>
@@ -535,6 +588,7 @@
       onkeydown="if(event.key==='Enter') startFromAddress()" />
     <button class="header-search-btn" onclick="startFromAddress()">Search</button>
     <button class="header-search-btn" onclick="startLoading()" title="Use my GPS location">GPS</button>
+    <div id="mobileLocationLabel" class="mobile-location-label"></div>
   </div>
 </header>
 
@@ -580,6 +634,12 @@ function getTheaterUrl(theaterName) {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
+function setLocationLabel(text) {
+  document.getElementById('locationLabel').textContent = text;
+  const mob = document.getElementById('mobileLocationLabel');
+  if (mob) mob.textContent = text;
+}
+
 let userLocation = null;
 let theaterLocations = new Map(); // address → {lat, lng}
 let lastRender = null;
@@ -671,8 +731,7 @@ async function startFromAddress() {
   try {
     const loc = await fetchJSON(`/api/geocode?address=${encodeURIComponent(address)}`);
     userLocation = { lat: loc.lat, lng: loc.lng };
-    document.getElementById('locationLabel').textContent =
-      address.length > 40 ? address.slice(0, 38) + '…' : address;
+    setLocationLabel(address.length > 40 ? address.slice(0, 38) + '…' : address);
     await loadShowtimes();
   } catch (err) {
     setState('error', 'Address not found', err.message, true);
@@ -680,8 +739,6 @@ async function startFromAddress() {
 }
 
 async function startLoading() {
-  const locLabel = document.getElementById('locationLabel');
-
   setState('loading', 'Getting your location…');
 
   try {
@@ -700,7 +757,7 @@ async function startLoading() {
     return;
   }
 
-  locLabel.textContent = `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`;
+  setLocationLabel(`${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`);
   await loadShowtimes();
 }
 
