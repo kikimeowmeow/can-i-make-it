@@ -320,6 +320,82 @@ async function fetchAlamo(theater) {
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
+// ── BAM Rose Cinemas ─────────────────────────────────────────────────────────
+// Two-step: 1) scrape /film for "Now Playing" film page links,
+//           2) hit /api/BAMApi/GetPerformancesByProduction?ProductionPageId=XXXXX per film.
+// Perf strings look like: "<a href='...'><span class='perfData'>Tue, Mar 17 at 4PM</span></a>"
+async function fetchBAM(theater) {
+  const { data: listHtml } = await axios.get('https://www.bam.org/film', {
+    headers: { 'User-Agent': UA }, timeout: 12000,
+  });
+  const $list = cheerio.load(listHtml);
+
+  // Collect detail-page paths only from cards that say "Now Playing"
+  const filmPaths = new Set();
+  $list('li').each((_, li) => {
+    if (!$list(li).text().includes('Now Playing')) return;
+    $list(li).find('a[href*="/film/"]').each((_, el) => {
+      const href = $list(el).attr('href') || '';
+      if (/\/film\/\d{4}\//.test(href)) filmPaths.add(href);
+    });
+  });
+
+  if (!filmPaths.size) {
+    console.error('[bam] no Now Playing film pages found');
+    return [];
+  }
+
+  // "Mar 16" — matches the month+day portion of "Tue, Mar 16 at 4PM"
+  const todayMonthDay = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', month: 'short', day: 'numeric',
+  }).format(new Date());
+
+  const movies = {};
+
+  await Promise.allSettled([...filmPaths].map(async path => {
+    const filmUrl = `https://www.bam.org${path}`;
+    const { data: filmHtml } = await axios.get(filmUrl, {
+      headers: { 'User-Agent': UA }, timeout: 12000,
+    });
+
+    // ProductionPageId lives in a JS AJAX call embedded in the page source
+    const idMatch = filmHtml.match(/ProductionPageId[=&](\d+)/);
+    if (!idMatch) return;
+
+    const { data: perfs } = await axios.get(
+      `https://www.bam.org/api/BAMApi/GetPerformancesByProduction?ProductionPageId=${idMatch[1]}`,
+      { headers: { 'User-Agent': UA }, timeout: 12000 }
+    );
+
+    const $film = cheerio.load(filmHtml);
+    const title = $film('h1').first().text().trim() || path.split('/').pop().replace(/-/g, ' ');
+
+    for (const perfHtml of (Array.isArray(perfs) ? perfs : [])) {
+      const $p = cheerio.load(perfHtml);
+      const perfText = $p('.perfData').text().trim(); // "Tue, Mar 17 at 4PM"
+      if (!perfText.includes(todayMonthDay)) continue;
+
+      // Parse "at 4PM" or "at 7:30PM"
+      const timeMatch = perfText.match(/at (\d{1,2})(?::(\d{2}))?([AP]M)/i);
+      if (!timeMatch) continue;
+      const h12 = parseInt(timeMatch[1]);
+      const min = parseInt(timeMatch[2] || '0');
+      const ampm = timeMatch[3].toLowerCase();
+      const display = `${h12}:${String(min).padStart(2, '0')}${ampm}`;
+      const ts = parseShowtime(display);
+      if (!ts) continue;
+
+      const ticketUrl = $p('a').attr('href') || theater.link;
+      if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
+      if (!movies[title].times.find(t => t.timestamp === ts)) {
+        movies[title].times.push({ display, timestamp: ts, ticketUrl });
+      }
+    }
+  }));
+
+  return Object.values(movies).filter(m => m.times.length > 0);
+}
+
 // ── Film at Lincoln Center ───────────────────────────────────────────────────
 // Homepage is organized by date with <h6> headers (e.g. "TODAY", "MON", "TOMORROW", "WED")
 // followed by film cards with class "details". Times in .Showtimes span, format "7:30 PM".
@@ -470,6 +546,15 @@ const THEATERS = [
     link: 'https://drafthouse.com/brooklyn',
     cinema_id: '2101',
     fetch: fetchAlamo,
+  },
+  {
+    id: 'bam',
+    name: 'BAM Rose Cinemas',
+    address: '30 Lafayette Ave, Brooklyn, NY 11217',
+    lat: 40.6862, lng: -73.9778,
+    preshow_minutes: 10, chain: null,
+    link: 'https://www.bam.org/film',
+    fetch: fetchBAM,
   },
   {
     id: 'film-forum',
