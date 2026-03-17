@@ -225,6 +225,24 @@
       border-top: 1px solid var(--border-heavy);
       border-bottom: 1px solid var(--border);
     }
+    .section-heading--catchable {
+      background: #889063;
+      color: #fff;
+      border-color: #889063;
+      padding: 7px 12px;
+    }
+    .section-heading--close {
+      background: #CE5A43;
+      color: #fff;
+      border-color: #CE5A43;
+      padding: 7px 12px;
+    }
+    .section-heading--cantmake {
+      background: #AB482D;
+      color: #fff;
+      border-color: #AB482D;
+      padding: 7px 12px;
+    }
     .section-block { margin-bottom: 32px; }
 
     /* ── Movie card ────────────────────────────────────────────────────────── */
@@ -583,7 +601,6 @@
     </div>
   </div>
   <div class="header-search">
-    <span class="header-search-label">From</span>
     <input class="header-search-input" id="headerAddressInput" type="text"
       placeholder="Address or intersection…"
       onkeydown="if(event.key==='Enter') startFromAddress()" />
@@ -855,13 +872,13 @@ function renderResults({ entries, updatedAt, apiErrors = [] }) {
 
   if (close.length > 0) {
     html += `<div class="section-block">
-      <div class="section-heading">Cutting It Close</div>`;
+      <div class="section-heading section-heading--close">Cutting It Close</div>`;
     close.forEach((e) => { html += renderCard(e); });
     html += `</div>`;
   }
 
   html += `<div class="section-block">
-    <div class="section-heading">Catchable Now</div>`;
+    <div class="section-heading section-heading--catchable">Catchable Now</div>`;
   if (catchable.length === 0) {
     html += `<div class="empty-section">No catchable movies right now — check back soon or try Refresh.</div>`;
   } else {
@@ -871,7 +888,7 @@ function renderResults({ entries, updatedAt, apiErrors = [] }) {
 
   if (cantMake.length > 0) {
     html += `<div class="section-block">
-      <div class="section-heading">Can't Make It</div>`;
+      <div class="section-heading section-heading--cantmake">Can't Make It</div>`;
     cantMake.forEach((e) => { html += renderCard(e); });
     html += `</div>`;
   }
