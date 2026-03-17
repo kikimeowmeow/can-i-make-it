@@ -521,7 +521,9 @@
 
       /* Search row */
       .header-search { flex-wrap: wrap; gap: 6px; }
-      .header-search-input { font-size: 12px; }
+      /* 16px minimum prevents iOS Safari from auto-zooming on focus */
+      .header-search-input { font-size: 16px; }
+      .address-input { font-size: 16px; }
 
       /* Location label moves into search row on mobile */
       .mobile-location-label {
