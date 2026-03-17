@@ -252,6 +252,63 @@ async function fetchMetrograph(theater) {
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
+// ── Film at Lincoln Center ───────────────────────────────────────────────────
+// Homepage is organized by date with <h6> headers (e.g. "TODAY", "MON", "TOMORROW", "WED")
+// followed by film cards with class "details". Times in .Showtimes span, format "7:30 PM".
+async function fetchFilmLinc(theater) {
+  const { data: html } = await axios.get('https://www.filmlinc.org/', {
+    headers: { 'User-Agent': UA },
+    timeout: 15000,
+  });
+  const $ = cheerio.load(html);
+  const movies = {};
+
+  // Today's h6 could be "TODAY" or the abbreviated weekday (MON, TUE, etc.)
+  const todayAbbr = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', weekday: 'short',
+  }).format(new Date()).toUpperCase(); // "MON", "TUE", etc.
+
+  const $todayH6 = $('h6').filter((_, el) => {
+    const text = $(el).text().trim().toUpperCase();
+    return text === 'TODAY' || text === todayAbbr;
+  }).first();
+
+  if (!$todayH6.length) {
+    const found = $('h6').map((_, el) => $(el).text().trim()).get();
+    console.error('[filmlinc] today header not found, looked for: TODAY or', todayAbbr, '| found:', found.join(', '));
+    return [];
+  }
+
+  const $todaySection = $todayH6.nextUntil('h6');
+
+  $todaySection.each((_, card) => {
+    const $card = $(card);
+    // Film title link points to /films/[slug]/
+    const $titleLink = $card.find('a[href*="/films/"]').first();
+    const title = $titleLink.text().trim();
+    if (!title) return;
+    const filmHref = $titleLink.attr('href') || '';
+    const filmUrl = filmHref.startsWith('http') ? filmHref : `https://www.filmlinc.org${filmHref}`;
+
+    $card.find('.Showtimes span, .Showtimes div').each((_, timeEl) => {
+      const raw = $(timeEl).text().trim();
+      // Strip special-event suffixes: "7:30 PMQ&A" → "7:30 PM"
+      const cleaned = raw.replace(/(Q&A|OC|Intro|presented.*)/i, '').trim();
+      const match = cleaned.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+      if (!match) return;
+      const display = match[1].toLowerCase().replace(/\s+/g, '');
+      const ts = parseShowtime(display);
+      if (!ts) return;
+      if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
+      if (!movies[title].times.find(t => t.timestamp === ts)) {
+        movies[title].times.push({ display, timestamp: ts });
+      }
+    });
+  });
+
+  return Object.values(movies).filter(m => m.times.length > 0);
+}
+
 // ── Anthology Film Archives ──────────────────────────────────────────────────
 async function fetchAnthology(theater) {
   const today = new Date();
@@ -338,6 +395,15 @@ const THEATERS = [
     preshow_minutes: 5, chain: null,
     link: 'https://metrograph.com',
     fetch: fetchMetrograph,
+  },
+  {
+    id: 'filmlinc',
+    name: 'Film at Lincoln Center',
+    address: '165 W 65th St, New York, NY 10023',
+    lat: 40.7731, lng: -73.9836,
+    preshow_minutes: 5, chain: null,
+    link: 'https://www.filmlinc.org',
+    fetch: fetchFilmLinc,
   },
   {
     id: 'anthology',
