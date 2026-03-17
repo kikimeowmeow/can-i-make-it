@@ -542,9 +542,13 @@ const SS_SKIP_PREFIXES = [
   'anthology film archives', 'anthology film archive',
   'angelika film center', 'angelika',
 ];
+// venue_title from Screen Slate API is raw HTML, e.g. '<a href="/venues/ifc-center">IFC Center</a>'
+// Strip all tags to get the plain venue name before any comparisons.
+function ssVenueText(raw) {
+  return (raw || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
 function isSSSkipVenue(venueTitle) {
-  const v = (venueTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
-  // startsWith(p) catches exact match plus any suffix ("Film Forum NYC", "Film Forum (35mm)", etc.)
+  const v = ssVenueText(venueTitle).toLowerCase();
   return SS_SKIP_PREFIXES.some(p => v.startsWith(p));
 }
 
@@ -575,8 +579,6 @@ async function fetchScreenSlate(userLat, userLng) {
   const venueMap = {};
   for (const d of details) {
     if (isSSSkipVenue(d.venue_title)) continue;
-    // Log every venue that passes the skip filter so we can audit via Vercel logs
-    console.log('[screenslate] venue passed skip:', JSON.stringify(d.venue_title));
 
     const stub = stubMap[d.nid];
     if (!stub?.field_timestamp) continue;
@@ -600,7 +602,7 @@ async function fetchScreenSlate(userLat, userLng) {
     if (!filmTitle) continue;
 
     const filmLink = d.field_url || 'https://www.screenslate.com';
-    const venueName = d.venue_title;
+    const venueName = ssVenueText(d.venue_title);
     if (!venueMap[venueName]) venueMap[venueName] = { films: {} };
     const films = venueMap[venueName].films;
     if (!films[filmTitle]) films[filmTitle] = { title: filmTitle, link: filmLink, times: [] };
@@ -765,12 +767,11 @@ module.exports = async (req, res) => {
     for (const t of ssTheaters) {
       const ssName = (t.name || '').toLowerCase().replace(/\s+/g, ' ').trim();
       if (!ssName) continue;
-      if (isSSSkipVenue(t.name)) { console.log('[screenslate] handler skipped by isSSSkipVenue:', ssName); continue; }
+      if (isSSSkipVenue(t.name)) continue;
       // Bidirectional: "Film Forum" matches scraped "Film Forum"; "BAM" matches scraped "BAM Rose Cinemas"
       const nameConflict = scrapedNamesList.some(n => ssName.startsWith(n) || n.startsWith(ssName));
-      if (nameConflict) { console.log('[screenslate] handler skipped by name prefix:', ssName); continue; }
-      if (existingNames.has(ssName)) { console.log('[screenslate] handler skipped exact match:', ssName); continue; }
-      console.log('[screenslate] ADDING venue:', ssName);
+      if (nameConflict) continue;
+      if (existingNames.has(ssName)) continue;
       theaters.push(t);
     }
   } catch (err) {
