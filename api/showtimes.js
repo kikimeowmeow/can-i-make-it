@@ -338,7 +338,7 @@ async function fetchBAM(theater) {
   $list('li').each((_, li) => {
     if (!$list(li).text().includes('Now Playing')) return;
     $list(li).find('a[href*="/film/"]').each((_, el) => {
-      const href = ($list(el).attr('href') || '').split('?')[0].replace(/\/$/, '');
+      const href = ($list(el).attr('href') || '').split('?')[0].split('#')[0].replace(/\/$/, '');
       if (/\/film\/\d{4}\//.test(href)) filmPaths.add(href);
     });
   });
