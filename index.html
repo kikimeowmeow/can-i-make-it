@@ -96,6 +96,7 @@
       white-space: nowrap;
     }
     .header-search-btn:hover { background: var(--text); color: var(--bg); }
+    .gps-btn { padding: 6px 9px; display: flex; align-items: center; justify-content: center; }
     .header-search-label {
       font-family: var(--font-mono);
       font-size: 10px;
@@ -537,11 +538,15 @@
       .refresh-label { display: none; } /* icon-only on mobile */
       .refresh-btn   { padding: 7px 9px; }
 
-      /* Search row */
-      .header-search { flex-wrap: wrap; gap: 6px; }
+      /* Search row — single line, GPS is icon-only */
+      .header-search { flex-wrap: nowrap; gap: 6px; }
       /* 16px minimum prevents iOS Safari from auto-zooming on focus */
       .header-search-input { font-size: 16px; }
       .address-input { font-size: 16px; }
+
+      /* Declutter badges on mobile */
+      .screenslate-badge { display: none; }
+      .preshow-long { display: none; }
 
       /* Location label moves into search row on mobile */
       .mobile-location-label {
@@ -605,7 +610,11 @@
       placeholder="Address or intersection…"
       onkeydown="if(event.key==='Enter') startFromAddress()" />
     <button class="header-search-btn" onclick="startFromAddress()">Search</button>
-    <button class="header-search-btn" onclick="startLoading()" title="Use my GPS location">GPS</button>
+    <button class="header-search-btn gps-btn" onclick="startLoading()" title="Use my GPS location">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="7"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="2" y1="12" x2="7" y2="12"/><line x1="17" y1="12" x2="22" y2="12"/>
+      </svg>
+    </button>
     <div id="mobileLocationLabel" class="mobile-location-label"></div>
   </div>
 </header>
@@ -922,7 +931,7 @@ function renderCard(e) {
   }
 
   const chainBadge = chain ? `<span class="chain-badge">${chain}</span>` : '';
-  const preshowBadge = preshow > 0 ? `<span class="preshow-badge">+${preshow}min trailers</span>` : '';
+  const preshowBadge = preshow > 0 ? `<span class="preshow-badge">+${preshow}min<span class="preshow-long"> trailers</span></span>` : '';
   const ssBadge = source === 'screenslate' ? `<span class="screenslate-badge">Screen Slate</span>` : '';
   const ocBadge = oc ? `<span class="oc-badge">OC</span>` : '';
   const actualStartNote = preshow > 0 ? `Movie starts ${fmt(actualStartMs)}` : `Starts ${fmt(actualStartMs)}`;
