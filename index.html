@@ -510,15 +510,14 @@
 
     /* ── Responsive ────────────────────────────────────────────────────────── */
     @media (max-width: 540px) {
-      /* Header — tighten up so nothing overflows */
+      /* Header — logo left, refresh right, nothing in between */
       header { padding: 0 16px; }
-      .header-top { gap: 10px; padding: 10px 0 8px; }
+      .header-top { justify-content: space-between; gap: 0; padding: 10px 0 8px; }
       .logo { font-size: 20px; }
       #locationLabel { display: none; } /* shown in search row instead */
-      .header-right { gap: 10px; }
-      #clockDisplay { font-size: 12px; }
+      #clockDisplay  { display: none; } /* phone already shows the time */
       .refresh-label { display: none; } /* icon-only on mobile */
-      .refresh-btn { padding: 6px 8px; }
+      .refresh-btn   { padding: 7px 9px; }
 
       /* Search row */
       .header-search { flex-wrap: wrap; gap: 6px; }
