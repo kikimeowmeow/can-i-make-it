@@ -86,7 +86,9 @@ async function fetchNitehawk(theater) {
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
-// ── Film Forum (JSON-LD ScreeningEvent data) ─────────────────────────────────
+// ── Film Forum ────────────────────────────────────────────────────────────────
+// Tabs: #tabs-0 = Mon … #tabs-6 = Sun (fixed, not rolling from today).
+// Times are bare like "12:30 3:00 5:30 8:00" — no AM/PM in the HTML.
 async function fetchFilmForum(theater) {
   const { data: html } = await axios.get('https://filmforum.org/', {
     headers: { 'User-Agent': UA },
@@ -95,33 +97,47 @@ async function fetchFilmForum(theater) {
   const $ = cheerio.load(html);
   const movies = {};
 
-  $('script[type="application/ld+json"]').each((_, el) => {
-    try {
-      const raw = $(el).html();
-      const data = JSON.parse(raw);
-      const items = Array.isArray(data) ? data : (data['@graph'] || [data]);
-      for (const item of items) {
-        if (item['@type'] !== 'ScreeningEvent') continue;
-        const title = item.name || item.workPresented?.name;
-        if (!title) continue;
-        const d = new Date(item.startDate);
-        if (isNaN(d)) continue;
-        if (!isNYCToday(d)) continue;
+  const DAY_MAP = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+  const dayAbbr = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', weekday: 'short',
+  }).format(new Date());
+  const tabIdx = DAY_MAP[dayAbbr] ?? 0;
+  const $tab = $(`#tabs-${tabIdx}`);
+  if (!$tab.length) {
+    console.error('[filmforum] tab not found for', dayAbbr, tabIdx);
+    return [];
+  }
 
-        // Convert to NYC display time
-        const nyParts = Object.fromEntries(
-          new Intl.DateTimeFormat('en-US', {
-            timeZone: 'America/New_York',
-            hour: 'numeric', minute: '2-digit', hour12: true,
-          }).formatToParts(d).map(p => [p.type, p.value])
-        );
-        const display = `${nyParts.hour}:${nyParts.minute}${nyParts.dayPeriod.toLowerCase()}`;
-        const ts = d.getTime(); // ISO date is already a correct UTC timestamp
-        if (!ts) continue;
-        if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+  // Film Forum bare-time inference:
+  // 12:xx → 12pm (noon), 1–9:xx → PM, 10–11:xx → AM (morning matinee)
+  function bareTimeTo24(h, m) {
+    if (h === 12) return { h24: 12, ap: 'pm' };
+    if (h >= 1 && h <= 9) return { h24: h + 12, ap: 'pm' };
+    return { h24: h, ap: 'am' }; // 10 or 11
+  }
+
+  $tab.find('a[href*="/films/"]').each((_, linkEl) => {
+    const title = $(linkEl).text().trim();
+    if (!title || title.length < 2) return;
+
+    // Times are plain text in the same parent block, after the title
+    const $parent = $(linkEl).closest('p, li, td, div').first();
+    const fullText = $parent.text();
+    const afterIdx = fullText.indexOf(title);
+    const afterText = afterIdx >= 0 ? fullText.slice(afterIdx + title.length) : fullText;
+
+    const matches = [...afterText.matchAll(/\b(\d{1,2}):(\d{2})\b/g)];
+    for (const m of matches) {
+      const h = parseInt(m[1]), min = parseInt(m[2]);
+      const { ap } = bareTimeTo24(h, min);
+      const display = `${h}:${String(min).padStart(2, '0')}${ap}`;
+      const ts = parseShowtime(display);
+      if (!ts) continue;
+      if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+      if (!movies[title].times.find(x => x.timestamp === ts)) {
         movies[title].times.push({ display, timestamp: ts });
       }
-    } catch {}
+    }
   });
 
   return Object.values(movies).filter(m => m.times.length > 0);
