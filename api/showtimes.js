@@ -297,59 +297,63 @@ async function fetchMetrograph(theater) {
 }
 
 // ── Alamo Drafthouse ─────────────────────────────────────────────────────────
-// Legacy feeds API: feeds.drafthouse.com/adcService/showtimes.svc/market/2100/
-// Market 2100 = NYC. Filter by CinemaId for Brooklyn (2101).
-// SessionDateTime is ISO 8601 in NYC local time. SessionStatus: "onsale"|"past"|"soldout"
+// v2 mother API: drafthouse.com/s/mother/v2/schedule/market/nyc
+// Returns { data: { presentations: [{slug, show:{title}, ...}], sessions: [{cinemaId, presentationSlug,
+//   showTimeClt, formatSlug, status, ...}] } }
+// showTimeClt is "2026-03-17T21:45:00" in cinema-local time. cinemaId "2101" = Brooklyn.
 async function fetchAlamo(theater) {
-  const { data } = await axios.get(
-    'https://feeds.drafthouse.com/adcService/showtimes.svc/market/2100/',
-    { headers: { 'User-Agent': UA }, timeout: 12000 }
+  const { data: body } = await axios.get(
+    'https://drafthouse.com/s/mother/v2/schedule/market/nyc',
+    { headers: { 'User-Agent': UA }, timeout: 15000 }
   );
 
   const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
-    .format(new Date()); // "2026-03-16"
+    .format(new Date()); // "2026-03-17"
 
-  // Date field is a long string ("Monday, March 16, 2026") — don't rely on it.
-  // Instead filter at the session level using SessionDateTime which is ISO format.
-  const dates = data?.Market?.Dates || [];
+  const { presentations = [], sessions = [] } = body?.data ?? {};
+
+  // Build slug → title + show URL lookup from presentations
+  const presMap = {};
+  for (const p of presentations) {
+    const title = p.show?.title || p.slug;
+    presMap[p.slug] = {
+      title,
+      link: `https://drafthouse.com/nyc/show/${p.slug}`,
+    };
+  }
+
   const movies = {};
 
-  for (const dateEntry of dates) {
-    const cinema = (dateEntry.Cinemas || []).find(c => c.CinemaId === theater.cinema_id);
-    if (!cinema) continue;
+  for (const session of sessions) {
+    // Filter to Brooklyn (cinemaId 2101) and today only
+    if (session.cinemaId !== theater.cinema_id) continue;
+    if (session.status === 'PAST') continue;
+    if (!(session.showTimeClt || '').startsWith(todayNYC)) continue;
 
-    for (const film of cinema.Films || []) {
-    const { clean: title } = stripOC(film.FilmName);
-    const filmUrl = `https://drafthouse.com/nyc/show/${film.FilmSlug}`;
+    const pres = presMap[session.presentationSlug];
+    if (!pres) continue;
+    const { clean: title } = stripOC(pres.title);
+    if (!title) continue;
 
-    for (const series of film.Series || []) {
-      for (const format of series.Formats || []) {
-        // Check format/series name for OC designation
-        const formatOC = stripOC(format.FormatName || '').oc || stripOC(series.SeriesName || '').oc;
-        for (const session of format.Sessions || []) {
-          if (session.SessionStatus === 'past') continue;
+    // OC: formatSlug === 'open-caption' or sessionAttributeSlugs contains it
+    const oc = session.formatSlug === 'open-caption' ||
+      (session.sessionAttributeSlugs || []).some(s => s.toLowerCase().includes('open-caption') || s.toLowerCase().includes('open caption'));
 
-          // SessionDateTime: "2026-03-16T22:30:00" — NYC local time; filter to today
-          if (!(session.SessionDateTime || '').startsWith(todayNYC)) continue;
-          const dtMatch = (session.SessionDateTime || '').match(/T(\d{2}):(\d{2})/);
-          if (!dtMatch) continue;
-          const h = parseInt(dtMatch[1]), min = parseInt(dtMatch[2]);
-          const ampm = h >= 12 ? 'pm' : 'am';
-          const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-          const display = `${h12}:${String(min).padStart(2, '0')}${ampm}`;
-          const ts = parseShowtime(display);
-          if (!ts) continue;
+    const dtMatch = (session.showTimeClt || '').match(/T(\d{2}):(\d{2})/);
+    if (!dtMatch) continue;
+    const h = parseInt(dtMatch[1]), min = parseInt(dtMatch[2]);
+    const ampm = h >= 12 ? 'pm' : 'am';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    const display = `${h12}:${String(min).padStart(2, '0')}${ampm}`;
+    const ts = parseShowtime(display);
+    if (!ts) continue;
 
-          const ticketUrl = `https://drafthouse.com/ticketing/${theater.cinema_id}/${session.SessionId}`;
-          if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
-          if (!movies[title].times.find(t => t.timestamp === ts)) {
-            movies[title].times.push({ display, timestamp: ts, ticketUrl, oc: formatOC });
-          }
-        }
-      }
+    const ticketUrl = `https://drafthouse.com/nyc/tickets/${session.sessionId || ''}`;
+    if (!movies[title]) movies[title] = { title, link: pres.link, times: [] };
+    if (!movies[title].times.find(t => t.timestamp === ts)) {
+      movies[title].times.push({ display, timestamp: ts, ticketUrl, oc });
     }
   }
-  } // end dateEntry loop
 
   return Object.values(movies).filter(m => m.times.length > 0);
 }
