@@ -569,6 +569,8 @@ const SS_VENUE_INFO = {
   'Quad Cinema':                 { lat: 40.7333, lng: -74.0002, address: '34 W 13th St, New York, NY 10011',          preshow: 10 },
   'Spectacle':                   { lat: 40.7139, lng: -73.9597, address: '124 S 3rd St, Brooklyn, NY 11249',          preshow: 5  },
   'Spectacle Theater':           { lat: 40.7139, lng: -73.9597, address: '124 S 3rd St, Brooklyn, NY 11249',          preshow: 5  },
+  'Firehouse: DCTV\'s Cinema for Documentary Film': { lat: 40.7142, lng: -74.0064, address: '87 Lafayette St, New York, NY 10013', preshow: 5 },
+  'Firehouse':                   { lat: 40.7142, lng: -74.0064, address: '87 Lafayette St, New York, NY 10013',        preshow: 5  },
   'Museum of the Moving Image':  { lat: 40.7565, lng: -73.9272, address: '36-01 35 Ave, Astoria, NY 11106',           preshow: 5  },
   'UnionDocs':                   { lat: 40.7262, lng: -73.9517, address: '322 Union Ave, Brooklyn, NY 11211',         preshow: 5  },
   'Syndicated':                  { lat: 40.7041, lng: -73.9372, address: '40 Bogart St, Brooklyn, NY 11206',          preshow: 10 },
@@ -643,11 +645,13 @@ async function fetchScreenSlate(userLat, userLng) {
     const ts = parseShowtime(display);
     if (!ts) continue;
 
-    // Strip venue suffix: Screen Slate formats all titles as "Film Title at Venue Name".
-    // Use lastIndexOf(' at ') so partial venue name mismatches don't leave the suffix behind.
+    // Strip venue suffix: Screen Slate formats titles as "Film at Venue" or "Film @ Venue".
+    // Use lastIndexOf so we take the last separator and handle titles that contain "at".
     const rawTitle = (d.title || '').trim();
-    const atIdx = rawTitle.lastIndexOf(' at ');
-    const withoutVenue = atIdx > 0 ? rawTitle.slice(0, atIdx).trim() : rawTitle;
+    const atIdx  = rawTitle.lastIndexOf(' at ');
+    const symIdx = rawTitle.lastIndexOf(' @ ');
+    const sepIdx = Math.max(atIdx, symIdx);
+    const withoutVenue = sepIdx > 0 ? rawTitle.slice(0, sepIdx).trim() : rawTitle;
     const { clean: filmTitle, oc: titleOC } = stripOC(withoutVenue);
     if (!filmTitle) continue;
 
