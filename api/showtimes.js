@@ -533,15 +533,20 @@ const SS_VENUE_INFO = {
 };
 
 // Venues already covered by individual scrapers — skip from Screen Slate
-const SS_SKIP_VENUES = new Set([
+// Checked via startsWith so "IFC Center " or "IFC Center NYC" variants also match.
+const SS_SKIP_PREFIXES = [
   'ifc center', 'film forum', 'metrograph',
-  'nitehawk cinema prospect park', 'nitehawk cinema williamsburg', 'nitehawk cinema',
-  'alamo drafthouse brooklyn', 'alamo drafthouse',
-  'bam', 'bam rose cinemas', 'brooklyn academy of music',
-  'film at lincoln center', 'filmlinc',
+  'nitehawk cinema', 'nitehawk williamsburg', 'nitehawk prospect',
+  'alamo drafthouse',
+  'bam', 'brooklyn academy of music',
+  'film at lincoln center',
   'anthology film archives', 'anthology film archive',
-  'angelika film center', 'angelika film center & cafe',
-]);
+  'angelika film center', 'angelika',
+];
+function isSSSkipVenue(venueTitle) {
+  const v = (venueTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return SS_SKIP_PREFIXES.some(p => v === p || v.startsWith(p + ' ') || v.startsWith(p + ','));
+}
 
 async function fetchScreenSlate(userLat, userLng) {
   const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
@@ -569,8 +574,7 @@ async function fetchScreenSlate(userLat, userLng) {
   // Group by venue
   const venueMap = {};
   for (const d of details) {
-    const venueKey = (d.venue_title || '').toLowerCase().trim();
-    if (SS_SKIP_VENUES.has(venueKey)) continue;
+    if (isSSSkipVenue(d.venue_title)) continue;
 
     const stub = stubMap[d.nid];
     if (!stub?.field_timestamp) continue;
@@ -747,10 +751,14 @@ module.exports = async (req, res) => {
     })
     .filter(Boolean);
 
-  // Append Screen Slate venues (non-traditional spaces not covered above)
+  // Append Screen Slate venues (non-traditional spaces not covered above).
+  // Deduplicate against existing scraped theaters by name as a second line of defense.
   try {
+    const existingNames = new Set(theaters.map(t => t.name.toLowerCase().trim()));
     const ssTheaters = await fetchScreenSlate(userLat, userLng);
-    theaters.push(...ssTheaters);
+    for (const t of ssTheaters) {
+      if (!existingNames.has(t.name.toLowerCase().trim())) theaters.push(t);
+    }
   } catch (err) {
     console.error('[screenslate] failed:', err.message);
   }
