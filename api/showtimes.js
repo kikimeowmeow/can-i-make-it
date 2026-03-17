@@ -62,7 +62,7 @@ function isNYCToday(dateObj) {
 // anywhere in the string, with optional surrounding brackets/parens/whitespace.
 function stripOC(s) {
   if (!s) return { clean: '', oc: false };
-  const PAT = /\s*[\(\[]?\b(open\s+caption(?:s|ed)?|O\.?C\.?)\b[\)\]]?\s*/gi;
+  const PAT = /\s*[\(\[]?\b(open\s+caption(?:s|ed|ing)?|O\.?C\.?)\b[\)\]]?\s*/gi;
   const oc = PAT.test(s);
   PAT.lastIndex = 0;
   const clean = s.replace(PAT, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -73,11 +73,20 @@ function stripOC(s) {
 // Uses the Filmbot/Nightjar REST API: /wp-json/nj/v1/showtime/listings
 // Response: { movies: [{movie_id, movie_name}], showtimes: [{movie_id, datetime, purchase_url}] }
 // datetime format: "YYYYMMDDHHmmss" in America/New_York time
+// OC info is NOT in the API — only in the rendered HTML as class="has-open-captions"
+// on <a data-showtime_id="XXXXXX"> elements. We fetch both and cross-reference by ID.
 async function fetchNitehawk(theater) {
-  const { data } = await axios.get(
-    `${theater.api_base}/wp-json/nj/v1/showtime/listings`,
-    { headers: { 'User-Agent': UA }, timeout: 12000 }
-  );
+  const [{ data }, { data: html }] = await Promise.all([
+    axios.get(`${theater.api_base}/wp-json/nj/v1/showtime/listings`, { headers: { 'User-Agent': UA }, timeout: 12000 }),
+    axios.get(theater.api_base + '/', { headers: { 'User-Agent': UA }, timeout: 12000 }),
+  ]);
+
+  // Build set of showtime IDs that have OC from the HTML
+  const $h = cheerio.load(html);
+  const ocIds = new Set();
+  $h('a.has-open-captions[data-showtime_id]').each((_, el) => {
+    ocIds.add(String($h(el).attr('data-showtime_id')));
+  });
 
   // Today's date in NYC as "YYYYMMDD" for filtering
   const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
@@ -92,7 +101,10 @@ async function fetchNitehawk(theater) {
     if (!st.datetime || st.datetime.slice(0, 8) !== todayNYC) continue;
     const rawTitle = movieMap[st.movie_id];
     if (!rawTitle) continue;
-    const { clean: title, oc } = stripOC(rawTitle);
+    const { clean: title, oc: titleOC } = stripOC(rawTitle);
+    // Extract showtime ID from purchase_url: ".../purchase/22003176/"
+    const idMatch = (st.purchase_url || '').match(/\/purchase\/(\d+)/);
+    const oc = titleOC || (idMatch ? ocIds.has(idMatch[1]) : false);
 
     // datetime "20260316213000" → NYC local 21:30 → 9:30pm
     const h = parseInt(st.datetime.slice(8, 10));
