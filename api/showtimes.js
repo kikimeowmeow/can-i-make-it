@@ -127,7 +127,7 @@ async function fetchFilmForum(theater) {
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
-// ── IFC Center (WordPress site, ticket links contain times) ──────────────────
+// ── IFC Center ───────────────────────────────────────────────────────────────
 async function fetchIFC(theater) {
   const { data: html } = await axios.get('https://www.ifccenter.com/', {
     headers: { 'User-Agent': UA },
@@ -136,28 +136,35 @@ async function fetchIFC(theater) {
   const $ = cheerio.load(html);
   const movies = {};
 
-  // IFC: ticket links href="https://tickets.ifccenter.com/..."
-  // text of each link is the showtime. The nearest h3/h4 is the film title.
-  $('a[href*="tickets.ifccenter.com"]').each((_, linkEl) => {
-    const timeText = $(linkEl).text().trim();
-    const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
-    if (!match) return;
+  // Structure:
+  //   <h3>Mon Mar 16</h3>          ← date header (h3 with NO link inside)
+  //   <div>
+  //     <h3><a href="/films/slug/">Film Title</a></h3>   ← film title
+  //     <ul>
+  //       <li><a href="https://tickets.ifccenter.com/...">7:00 PM</a></li>
+  //     </ul>
+  //   </div>
+  //
+  // Distinguish film-title h3 from date-header h3 by presence of an /films/ link.
 
-    // Walk up DOM to find the enclosing film block, then grab its heading
-    const $block = $(linkEl).closest('.wp-block-group, article, section, .film-block');
-    let title = $block.find('h3, h4').first().text().trim();
-
-    // Fallback: look for any preceding h3/h4 sibling in the parent
-    if (!title) {
-      title = $(linkEl).parentsUntil('body').find('h3, h4').first().text().trim();
-    }
+  $('h3:has(a[href*="/films/"])').each((_, titleEl) => {
+    const title = $(titleEl).find('a').first().text().trim();
     if (!title) return;
 
-    const display = match[1].toLowerCase().replace(/\s+/g, '');
-    const ts = parseShowtime(display);
-    if (!ts) return;
-    if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
-    movies[title].times.push({ display, timestamp: ts });
+    // Showtimes are in the <ul> that follows this h3 (sibling or inside same parent div)
+    const $ul = $(titleEl).nextAll('ul').first();
+    if (!$ul.length) return;
+
+    $ul.find('a[href*="tickets.ifccenter.com"]').each((_, linkEl) => {
+      const timeText = $(linkEl).text().trim();
+      const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+      if (!match) return;
+      const display = match[1].toLowerCase().replace(/\s+/g, '');
+      const ts = parseShowtime(display);
+      if (!ts) return;
+      if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
+      movies[title].times.push({ display, timestamp: ts });
+    });
   });
 
   return Object.values(movies).filter(m => m.times.length > 0);
