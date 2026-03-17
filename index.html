@@ -755,7 +755,7 @@ function renderResults({ entries, updatedAt }) {
   const nowMs     = Date.now();
   const catchable  = live.filter((e) => e.status === 'catchable' && e.showtime <= nowMs + 90 * 60000).sort((a, b) => a.showtime - b.showtime);
   const close      = live.filter((e) => e.status === 'close')                                        .sort((a, b) => a.showtime - b.showtime);
-  const cantMake   = live.filter((e) => e.status === 'too-late').sort((a, b) => a.showtime - b.showtime);
+  const cantMake   = live.filter((e) => e.status === 'too-late' && e.bufferMins >= -30).sort((a, b) => a.showtime - b.showtime);
 
   let html = '';
 
