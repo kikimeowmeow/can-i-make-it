@@ -56,6 +56,19 @@ function isNYCToday(dateObj) {
   return fmt(dateObj) === fmt(new Date());
 }
 
+// Detect and strip Open Caption / OC markers from a string.
+// Returns { clean: string, oc: boolean }
+// Catches: "OC", "(OC)", "[OC]", "Open Caption", "Open Captions", "Open Captioned"
+// anywhere in the string, with optional surrounding brackets/parens/whitespace.
+function stripOC(s) {
+  if (!s) return { clean: '', oc: false };
+  const PAT = /\s*[\(\[]?\b(open\s+caption(?:s|ed)?|O\.?C\.?)\b[\)\]]?\s*/gi;
+  const oc = PAT.test(s);
+  PAT.lastIndex = 0;
+  const clean = s.replace(PAT, ' ').replace(/\s{2,}/g, ' ').trim();
+  return { clean, oc };
+}
+
 // ── Nitehawk (Prospect Park + Williamsburg) ───────────────────────────────────
 // Uses the Filmbot/Nightjar REST API: /wp-json/nj/v1/showtime/listings
 // Response: { movies: [{movie_id, movie_name}], showtimes: [{movie_id, datetime, purchase_url}] }
@@ -77,8 +90,9 @@ async function fetchNitehawk(theater) {
   const movies = {};
   for (const st of data.showtimes || []) {
     if (!st.datetime || st.datetime.slice(0, 8) !== todayNYC) continue;
-    const title = movieMap[st.movie_id];
-    if (!title) continue;
+    const rawTitle = movieMap[st.movie_id];
+    if (!rawTitle) continue;
+    const { clean: title, oc } = stripOC(rawTitle);
 
     // datetime "20260316213000" → NYC local 21:30 → 9:30pm
     const h = parseInt(st.datetime.slice(8, 10));
@@ -91,7 +105,7 @@ async function fetchNitehawk(theater) {
 
     if (!movies[title]) movies[title] = { title, link: st.purchase_url || theater.link, times: [] };
     if (!movies[title].times.find(t => t.timestamp === ts)) {
-      movies[title].times.push({ display, timestamp: ts });
+      movies[title].times.push({ display, timestamp: ts, oc });
     }
   }
 
@@ -125,14 +139,16 @@ async function fetchFilmForum(theater) {
   }
 
   $tab.find('a[href*="/film/"]').each((_, linkEl) => {
-    const title = $(linkEl).text().trim();
+    const { clean: title, oc: titleOC } = stripOC($(linkEl).text().trim());
     if (!title || title.length < 2) return;
 
     // Times are plain text in the same parent block, after the title
     const $parent = $(linkEl).closest('p, li, td, div').first();
     const fullText = $parent.text();
-    const afterIdx = fullText.indexOf(title);
-    const afterText = afterIdx >= 0 ? fullText.slice(afterIdx + title.length) : fullText;
+    const afterIdx = fullText.indexOf($(linkEl).text().trim());
+    const afterText = afterIdx >= 0 ? fullText.slice(afterIdx + $(linkEl).text().trim().length) : fullText;
+    const { oc: contextOC } = stripOC(afterText);
+    const oc = titleOC || contextOC;
 
     const matches = [...afterText.matchAll(/\b(\d{1,2}):(\d{2})\b/g)];
     for (const m of matches) {
@@ -143,7 +159,7 @@ async function fetchFilmForum(theater) {
       if (!ts) continue;
       if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
       if (!movies[title].times.find(x => x.timestamp === ts)) {
-        movies[title].times.push({ display, timestamp: ts });
+        movies[title].times.push({ display, timestamp: ts, oc });
       }
     }
   });
@@ -184,7 +200,7 @@ async function fetchIFC(theater) {
   const $todaySection = $todayH3.nextUntil('h3');
 
   $todaySection.find('h3:has(a[href*="/films/"])').each((_, titleEl) => {
-    const title = $(titleEl).find('a').first().text().trim();
+    const { clean: title } = stripOC($(titleEl).find('a').first().text().trim());
     if (!title) return;
 
     const $ul = $(titleEl).nextAll('ul').first();
@@ -192,6 +208,7 @@ async function fetchIFC(theater) {
 
     $ul.find('a[href*="tickets.ifccenter.com"]').each((_, linkEl) => {
       const timeText = $(linkEl).text().trim();
+      const { oc } = stripOC(timeText);
       const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
       if (!match) return;
       const display = match[1].toLowerCase().replace(/\s+/g, '');
@@ -200,7 +217,7 @@ async function fetchIFC(theater) {
       if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
       // Deduplicate
       if (!movies[title].times.find(t => t.timestamp === ts)) {
-        movies[title].times.push({ display, timestamp: ts });
+        movies[title].times.push({ display, timestamp: ts, oc });
       }
     });
   });
@@ -235,12 +252,14 @@ async function fetchMetrograph(theater) {
     const $item = $(item);
     // Use only direct text nodes of the anchor — avoids picking up nested date/venue spans
     const $a = $item.find('h4 a').first();
-    const title = $a.contents().filter((_, n) => n.type === 'text').map((_, n) => n.data).get().join('').trim()
+    const rawTitle = $a.contents().filter((_, n) => n.type === 'text').map((_, n) => n.data).get().join('').trim()
       || $a.text().split(/[\n·•|]/)[0].trim(); // fallback
+    const { clean: title } = stripOC(rawTitle);
     if (!title) return;
 
     $item.find('div.showtimes a').each((_, linkEl) => {
       const timeText = $(linkEl).text().trim();
+      const { oc } = stripOC(timeText);
       const match = timeText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
       if (!match) return;
       const display = match[1].toLowerCase().replace(/\s+/g, '');
@@ -248,7 +267,7 @@ async function fetchMetrograph(theater) {
       if (!ts) return;
       if (!movies[title]) movies[title] = { title, link: theater.link, times: [] };
       if (!movies[title].times.find(t => t.timestamp === ts)) {
-        movies[title].times.push({ display, timestamp: ts });
+        movies[title].times.push({ display, timestamp: ts, oc });
       }
     });
   });
@@ -279,11 +298,13 @@ async function fetchAlamo(theater) {
     if (!cinema) continue;
 
     for (const film of cinema.Films || []) {
-    const title = film.FilmName;
+    const { clean: title } = stripOC(film.FilmName);
     const filmUrl = `https://drafthouse.com/nyc/show/${film.FilmSlug}`;
 
     for (const series of film.Series || []) {
       for (const format of series.Formats || []) {
+        // Check format/series name for OC designation
+        const formatOC = stripOC(format.FormatName || '').oc || stripOC(series.SeriesName || '').oc;
         for (const session of format.Sessions || []) {
           if (session.SessionStatus === 'past') continue;
 
@@ -301,7 +322,7 @@ async function fetchAlamo(theater) {
           const ticketUrl = `https://drafthouse.com/ticketing/${theater.cinema_id}/${session.SessionId}`;
           if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
           if (!movies[title].times.find(t => t.timestamp === ts)) {
-            movies[title].times.push({ display, timestamp: ts, ticketUrl });
+            movies[title].times.push({ display, timestamp: ts, ticketUrl, oc: formatOC });
           }
         }
       }
@@ -371,12 +392,13 @@ async function fetchBAM(theater) {
     );
 
     const $film = cheerio.load(filmHtml);
-    const title = $film('h1').first().text().trim() || path.split('/').pop().replace(/-/g, ' ');
+    const { clean: title } = stripOC($film('h1').first().text().trim() || path.split('/').pop().replace(/-/g, ' '));
 
     for (const perfHtml of (Array.isArray(perfs) ? perfs : [])) {
       const $p = cheerio.load(perfHtml);
       const perfText = $p('.perfData').text().trim(); // "Tue, Mar 17 at 4PM"
       if (!perfText.includes(todayMonthDay)) continue;
+      const { oc } = stripOC(perfText);
 
       // Parse "at 4PM" or "at 7:30PM"
       const timeMatch = perfText.match(/at (\d{1,2})(?::(\d{2}))?([AP]M)/i);
@@ -393,7 +415,7 @@ async function fetchBAM(theater) {
       const key = normalizeTitle(title);
       if (!movies[key]) movies[key] = { title, link: filmUrl, times: [] };
       if (!movies[key].times.find(t => t.timestamp === ts)) {
-        movies[key].times.push({ display, timestamp: ts, ticketUrl });
+        movies[key].times.push({ display, timestamp: ts, ticketUrl, oc });
       }
     }
   }));
@@ -434,7 +456,7 @@ async function fetchFilmLinc(theater) {
     const $card = $(card);
     // Film title link points to /films/[slug]/
     const $titleLink = $card.find('a[href*="/films/"]').first();
-    const title = $titleLink.text().trim();
+    const { clean: title } = stripOC($titleLink.text().trim());
     if (!title) return;
     const filmHref = $titleLink.attr('href') || '';
     const filmUrl = filmHref.startsWith('http') ? filmHref : `https://www.filmlinc.org${filmHref}`;
@@ -442,6 +464,7 @@ async function fetchFilmLinc(theater) {
     // Times are plain text (no .Showtimes class) and may appear twice (mobile+desktop).
     // Regex over card text, deduplicate by timestamp.
     const cardText = $card.text();
+    const { oc } = stripOC(cardText);
     const seenTs = new Set();
     for (const m of [...cardText.matchAll(/\b(\d{1,2}:\d{2}\s*[AP]M)\b/gi)]) {
       const display = m[1].toLowerCase().replace(/\s+/g, '');
@@ -449,7 +472,7 @@ async function fetchFilmLinc(theater) {
       if (!ts || seenTs.has(ts)) continue;
       seenTs.add(ts);
       if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
-      movies[title].times.push({ display, timestamp: ts });
+      movies[title].times.push({ display, timestamp: ts, oc });
     }
   });
 
@@ -497,11 +520,12 @@ async function fetchAnthology(theater) {
   $todaySection.find('a').each((_, linkEl) => {
     const href = $(linkEl).attr('href') || '';
     if (!href.includes('showing-') && !href.includes('film_screenings')) return;
-    const title = $(linkEl).text().trim();
+    const { clean: title } = stripOC($(linkEl).text().trim());
     if (!title || title.length < 2) return;
 
     // Time is a plain text node in the same <li> before the link
     const liText = $(linkEl).closest('li').text().trim();
+    const { oc } = stripOC(liText);
     const match = liText.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
     if (!match) return;
     const display = match[1].toLowerCase().replace(/\s+/g, '');
@@ -511,7 +535,7 @@ async function fetchAnthology(theater) {
     const filmUrl = href.startsWith('http') ? href : `https://anthologyfilmarchives.org${href}`;
     if (!movies[title]) movies[title] = { title, link: filmUrl, times: [] };
     if (!movies[title].times.find(t => t.timestamp === ts)) {
-      movies[title].times.push({ display, timestamp: ts });
+      movies[title].times.push({ display, timestamp: ts, oc });
     }
   });
 
@@ -610,8 +634,13 @@ async function fetchScreenSlate(userLat, userLng) {
     // Use lastIndexOf(' at ') so partial venue name mismatches don't leave the suffix behind.
     const rawTitle = (d.title || '').trim();
     const atIdx = rawTitle.lastIndexOf(' at ');
-    const filmTitle = atIdx > 0 ? rawTitle.slice(0, atIdx).trim() : rawTitle;
+    const withoutVenue = atIdx > 0 ? rawTitle.slice(0, atIdx).trim() : rawTitle;
+    const { clean: filmTitle, oc: titleOC } = stripOC(withoutVenue);
     if (!filmTitle) continue;
+
+    // field_note in stub may carry accessibility info like "Open Caption"
+    const noteOC = stripOC(stub.field_note || '').oc;
+    const oc = titleOC || noteOC;
 
     const filmLink = d.field_url || 'https://www.screenslate.com';
     const venueName = ssVenueText(d.venue_title);
@@ -619,7 +648,7 @@ async function fetchScreenSlate(userLat, userLng) {
     const films = venueMap[venueName].films;
     if (!films[filmTitle]) films[filmTitle] = { title: filmTitle, link: filmLink, times: [] };
     if (!films[filmTitle].times.find(t => t.timestamp === ts)) {
-      films[filmTitle].times.push({ display, timestamp: ts });
+      films[filmTitle].times.push({ display, timestamp: ts, oc });
     }
   }
 

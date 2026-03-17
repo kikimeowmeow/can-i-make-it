@@ -289,6 +289,30 @@
       border: 1px solid #c4b5e8;
       letter-spacing: 0.04em;
     }
+    .oc-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 5px;
+      color: #889063;
+      background: rgba(136, 144, 99, 0.12);
+      border: 1px solid #889063;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .card-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+      min-width: 0;
+    }
+    .card-title-row .card-title {
+      margin-bottom: 0;
+      flex: 1;
+      min-width: 0;
+    }
     .card-footer {
       display: flex;
       flex-wrap: wrap;
@@ -706,6 +730,7 @@ async function loadShowtimes() {
           chain:           theater.chain,
           preshow:         theater.preshow_minutes,
           source:          movie.source || theater.source || null,
+          oc:              slot.oc || false,
           transitMins:     theater.transitMins,
           travelMode:      theater.travelMode,
           showtime:        slot.timestamp,
@@ -769,7 +794,7 @@ function renderResults({ entries, updatedAt }) {
 }
 
 function renderCard(e) {
-  const { title, movieLink, theater, chain, preshow, source, transitMins, travelMode, showtime, showtimeDisplay,
+  const { title, movieLink, theater, chain, preshow, source, oc, transitMins, travelMode, showtime, showtimeDisplay,
           status, bufferMins, leaveByMs, leaveInMins, actualStartMs } = e;
 
   let leaveCta = '';
@@ -792,6 +817,7 @@ function renderCard(e) {
   const chainBadge = chain ? `<span class="chain-badge">${chain}</span>` : '';
   const preshowBadge = preshow > 0 ? `<span class="preshow-badge">+${preshow}min trailers</span>` : '';
   const ssBadge = source === 'screenslate' ? `<span class="screenslate-badge">Screen Slate</span>` : '';
+  const ocBadge = oc ? `<span class="oc-badge">OC</span>` : '';
   const actualStartNote = preshow > 0 ? `Movie starts ${fmt(actualStartMs)}` : `Starts ${fmt(actualStartMs)}`;
 
   const statusLabels = {
@@ -808,7 +834,10 @@ function renderCard(e) {
   return `
     <div class="card ${status}">
       <div class="card-left">
-        <div class="card-title">${titleEl}</div>
+        <div class="card-title-row">
+          <div class="card-title">${titleEl}</div>
+          ${ocBadge}
+        </div>
         <div class="card-meta">
           <span>${theater}</span>
           ${chainBadge}
