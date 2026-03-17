@@ -317,9 +317,10 @@ async function fetchAlamo(theater) {
 function normalizeTitle(s) {
   return (s || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip combining accents
-    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'") // smart single quotes → '
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035\u0060]/g, "'") // smart single quotes → '
     .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036\u00AB\u00BB]/g, '"') // smart double quotes → "
-    .replace(/\s+/g, ' ').trim().toLowerCase();
+    .replace(/\s+/g, ' ').trim().toLowerCase()
+    .replace(/^['""\u201C\u201D]+|['""\u201C\u201D]+$/g, ''); // strip surrounding quote chars
 }
 
 // ── BAM Rose Cinemas ─────────────────────────────────────────────────────────
@@ -806,6 +807,27 @@ module.exports = async (req, res) => {
     }
   } catch (err) {
     console.error('[screenslate] failed:', err.message);
+  }
+
+  // Final dedup: within each theater merge any movies sharing a normalized title
+  // (catches special-char variants from multiple scrape paths or SS cross-contamination)
+  for (const t of theaters) {
+    const merged = {};
+    for (const m of t.movies) {
+      const key = normalizeTitle(m.title);
+      if (!merged[key]) {
+        merged[key] = { ...m, times: [...m.times] };
+      } else {
+        for (const slot of m.times) {
+          if (!merged[key].times.find(x => x.timestamp === slot.timestamp)) {
+            merged[key].times.push(slot);
+          }
+        }
+        // Prefer the SS-badged source if either entry has it
+        if (m.source === 'screenslate') merged[key].source = 'screenslate';
+      }
+    }
+    t.movies = Object.values(merged);
   }
 
   res.json({ theaters });
