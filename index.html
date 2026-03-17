@@ -549,13 +549,13 @@
       .refresh-label { display: none; }
       .refresh-btn   { padding: 7px 9px; }
 
-      /* Right column stacks refresh above GPS */
-      .header-right { flex-direction: column; gap: 6px; padding: 8px 0; justify-content: center; }
+      /* Top row: refresh + GPS side by side in right column */
+      .header-right { flex-direction: row; gap: 6px; padding: 10px 0 8px; }
       .gps-right  { display: flex; align-items: center; justify-content: center; } /* show in right col */
       .gps-search { display: none; }                                                /* hide in search row */
 
-      /* Search row — no GPS button, just input + search */
-      .header-search { grid-column: 1; flex-wrap: nowrap; gap: 6px; }
+      /* Search row — full width, no GPS button */
+      .header-search { grid-column: 1 / 3; flex-wrap: nowrap; gap: 6px; }
       /* 16px minimum prevents iOS Safari from auto-zooming on focus */
       .header-search-input { font-size: 16px; }
       .address-input { font-size: 16px; }
@@ -566,27 +566,14 @@
       .ss-mini { display: inline; font-weight: 600; }
       .preshow-long { display: none; }
 
-      /* Location label moves into search row on mobile */
-      .mobile-location-label {
-        display: block;
-        width: 100%;
-        font-family: var(--font-mono);
-        font-size: 10px;
-        color: var(--text-dim);
-        text-transform: uppercase;
-        letter-spacing: 0.07em;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        padding-bottom: 2px;
-      }
-      .mobile-location-label:empty { display: none; }
+      /* Location label hidden on mobile — no space for it */
+      .mobile-location-label { display: none !important; }
 
       /* Main layout */
       main { padding: 20px 16px 80px; }
 
-      /* Summary bar — stacked, right-aligned, no timestamp */
-      .summary-bar { flex-direction: column; align-items: flex-end; gap: 3px; font-size: 10px; }
+      /* Summary bar — left-aligned row, hide timestamp */
+      .summary-bar { flex-direction: row; align-items: center; gap: 4px 14px; font-size: 10px; }
       .summary-updated { display: none; }
 
       /* Cards — stack vertically, allow title to wrap */
@@ -895,9 +882,9 @@ function renderResults({ entries, updatedAt, apiErrors = [] }) {
 
   html += `
     <div class="summary-bar">
+      <div class="summary-pill"><span class="dot dot-yellow"></span>${pluralize(close.length, 'movie')} close call</div>
       <div class="summary-pill"><span class="dot dot-green"></span>${pluralize(catchable.length, 'movie')} catchable</div>
-      <div class="summary-pill"><span class="dot dot-yellow"></span>${pluralize(close.length, 'movie')} close</div>
-      <div class="summary-pill"><span class="dot dot-red"></span>${pluralize(cantMake.length, 'movie')} won't make</div>
+      <div class="summary-pill"><span class="dot dot-red"></span>${pluralize(cantMake.length, 'movie')} won't make it</div>
       <div class="summary-updated">Updated ${fmt(updatedAt)}</div>
     </div>
     ${apiErrors.length > 0 ? `<div class="errors-bar">Data unavailable for: ${apiErrors.join(', ')}</div>` : ''}`;
