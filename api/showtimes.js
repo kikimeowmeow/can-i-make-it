@@ -506,6 +506,122 @@ async function fetchAnthology(theater) {
   return Object.values(movies).filter(m => m.times.length > 0);
 }
 
+// ── Screen Slate ─────────────────────────────────────────────────────────────
+// Two-step undocumented API:
+//   1) /api/screenings/date?_format=json&date=YYYYMMDD&field_city_target_id=10969
+//      → [{ nid, field_time, field_note, field_timestamp }]
+//   2) /api/screenings/id/{nid+nid+...}?_format=json
+//      → [{ nid, title ("Film at Venue"), venue_title, field_url, ... }]
+// Used as a supplementary source for venues not already in THEATERS.
+
+const SS_VENUE_INFO = {
+  'MoMA':                        { lat: 40.7614, lng: -73.9776, address: '11 W 53rd St, New York, NY 10019',          preshow: 5  },
+  'Museum of Modern Art':        { lat: 40.7614, lng: -73.9776, address: '11 W 53rd St, New York, NY 10019',          preshow: 5  },
+  'Quad Cinema':                 { lat: 40.7333, lng: -74.0002, address: '34 W 13th St, New York, NY 10011',          preshow: 10 },
+  'Spectacle':                   { lat: 40.7139, lng: -73.9597, address: '124 S 3rd St, Brooklyn, NY 11249',          preshow: 5  },
+  'Spectacle Theater':           { lat: 40.7139, lng: -73.9597, address: '124 S 3rd St, Brooklyn, NY 11249',          preshow: 5  },
+  'Museum of the Moving Image':  { lat: 40.7565, lng: -73.9272, address: '36-01 35 Ave, Astoria, NY 11106',           preshow: 5  },
+  'UnionDocs':                   { lat: 40.7262, lng: -73.9517, address: '322 Union Ave, Brooklyn, NY 11211',         preshow: 5  },
+  'Syndicated':                  { lat: 40.7041, lng: -73.9372, address: '40 Bogart St, Brooklyn, NY 11206',          preshow: 10 },
+  'Metrograph':                  { lat: 40.7150, lng: -73.9900, address: '7 Ludlow St, New York, NY 10002',           preshow: 5  },
+  'Film Forum':                  { lat: 40.7282, lng: -74.0043, address: '209 W Houston St, New York, NY 10014',      preshow: 5  },
+  'IFC Center':                  { lat: 40.7330, lng: -74.0026, address: '323 Sixth Ave, New York, NY 10014',         preshow: 10 },
+  'Film at Lincoln Center':      { lat: 40.7731, lng: -73.9836, address: '165 W 65th St, New York, NY 10023',         preshow: 5  },
+  'BAM':                         { lat: 40.6862, lng: -73.9778, address: '30 Lafayette Ave, Brooklyn, NY 11217',      preshow: 10 },
+  'Anthology Film Archives':     { lat: 40.7242, lng: -73.9892, address: '32 Second Ave, New York, NY 10003',         preshow: 5  },
+  'Nitehawk Cinema':             { lat: 40.7143, lng: -73.9614, address: '136 Metropolitan Ave, Brooklyn, NY 11249',  preshow: 10 },
+};
+
+// Venues already covered by individual scrapers — skip from Screen Slate
+const SS_SKIP_VENUES = new Set([
+  'ifc center', 'film forum', 'metrograph',
+  'nitehawk cinema prospect park', 'nitehawk cinema williamsburg', 'nitehawk cinema',
+  'alamo drafthouse brooklyn', 'alamo drafthouse',
+  'bam', 'bam rose cinemas', 'brooklyn academy of music',
+  'film at lincoln center', 'filmlinc',
+  'anthology film archives', 'anthology film archive',
+  'angelika film center', 'angelika film center & cafe',
+]);
+
+async function fetchScreenSlate(userLat, userLng) {
+  const todayNYC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  const dateCompact = todayNYC.replace(/-/g, ''); // "20260317"
+
+  // Step 1: all NYC screening stubs for today
+  const { data: stubs } = await axios.get(
+    `https://www.screenslate.com/api/screenings/date?_format=json&date=${dateCompact}&field_city_target_id=10969`,
+    { headers: { 'User-Agent': UA }, timeout: 12000 }
+  );
+  if (!stubs?.length) return [];
+
+  // Step 2: full details for all screenings
+  const nids = stubs.map(s => s.nid).join('+');
+  const { data: details } = await axios.get(
+    `https://www.screenslate.com/api/screenings/id/${nids}?_format=json`,
+    { headers: { 'User-Agent': UA }, timeout: 15000 }
+  );
+  if (!details?.length) return [];
+
+  // Build nid → stub map for time lookups
+  const stubMap = {};
+  for (const s of stubs) stubMap[s.nid] = s;
+
+  // Group by venue
+  const venueMap = {};
+  for (const d of details) {
+    const venueKey = (d.venue_title || '').toLowerCase().trim();
+    if (SS_SKIP_VENUES.has(venueKey)) continue;
+
+    const stub = stubMap[d.nid];
+    if (!stub?.field_timestamp) continue;
+
+    // field_timestamp is "2026-03-17T10:35:00" — NYC local time
+    // Confirm it's today and extract h/m for parseShowtime
+    const isoMatch = stub.field_timestamp.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+    if (!isoMatch || isoMatch[1] !== todayNYC) continue;
+    const h = parseInt(isoMatch[2]), m = parseInt(isoMatch[3]);
+    const ampm = h >= 12 ? 'pm' : 'am';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    const display = `${h12}:${String(m).padStart(2, '0')}${ampm}`;
+    const ts = parseShowtime(display);
+    if (!ts) continue;
+
+    // Strip " at {venue_title}" suffix to get film title
+    const suffix = ` at ${d.venue_title}`;
+    const filmTitle = (d.title || '').endsWith(suffix)
+      ? d.title.slice(0, -suffix.length).trim()
+      : (d.title || '').trim();
+    if (!filmTitle) continue;
+
+    const filmLink = d.field_url || 'https://www.screenslate.com';
+    const venueName = d.venue_title;
+    if (!venueMap[venueName]) venueMap[venueName] = { films: {} };
+    const films = venueMap[venueName].films;
+    if (!films[filmTitle]) films[filmTitle] = { title: filmTitle, link: filmLink, times: [] };
+    if (!films[filmTitle].times.find(t => t.timestamp === ts)) {
+      films[filmTitle].times.push({ display, timestamp: ts });
+    }
+  }
+
+  // Convert to theater-format objects
+  return Object.entries(venueMap).map(([venueName, { films }]) => {
+    const movies = Object.values(films).filter(m => m.times.length > 0);
+    if (!movies.length) return null;
+    const info = SS_VENUE_INFO[venueName] ?? null;
+    const vLat = info?.lat ?? null;
+    const vLng = info?.lng ?? null;
+    return {
+      name: venueName,
+      address: info?.address ?? `${venueName}, New York, NY`,
+      distance_miles: (vLat && vLng) ? distanceMiles(userLat, userLng, vLat, vLng) : 99,
+      link: 'https://www.screenslate.com',
+      chain: null,
+      preshow_minutes: info?.preshow ?? 5,
+      movies,
+    };
+  }).filter(Boolean);
+}
+
 // ── Theater registry ─────────────────────────────────────────────────────────
 const THEATERS = [
   {
@@ -629,6 +745,14 @@ module.exports = async (req, res) => {
       return r.value;
     })
     .filter(Boolean);
+
+  // Append Screen Slate venues (non-traditional spaces not covered above)
+  try {
+    const ssTheaters = await fetchScreenSlate(userLat, userLng);
+    theaters.push(...ssTheaters);
+  } catch (err) {
+    console.error('[screenslate] failed:', err.message);
+  }
 
   res.json({ theaters });
 };
