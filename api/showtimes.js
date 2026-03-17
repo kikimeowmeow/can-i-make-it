@@ -233,7 +233,10 @@ async function fetchMetrograph(theater) {
 
   $todayDiv.find('.item').each((_, item) => {
     const $item = $(item);
-    const title = $item.find('h4 a').first().text().trim();
+    // Use only direct text nodes of the anchor — avoids picking up nested date/venue spans
+    const $a = $item.find('h4 a').first();
+    const title = $a.contents().filter((_, n) => n.type === 'text').map((_, n) => n.data).get().join('').trim()
+      || $a.text().split(/[\n·•|]/)[0].trim(); // fallback
     if (!title) return;
 
     $item.find('div.showtimes a').each((_, linkEl) => {
@@ -572,6 +575,8 @@ async function fetchScreenSlate(userLat, userLng) {
   const venueMap = {};
   for (const d of details) {
     if (isSSSkipVenue(d.venue_title)) continue;
+    // Log every venue that passes the skip filter so we can audit via Vercel logs
+    console.log('[screenslate] venue passed skip:', JSON.stringify(d.venue_title));
 
     const stub = stubMap[d.nid];
     if (!stub?.field_timestamp) continue;
@@ -749,15 +754,23 @@ module.exports = async (req, res) => {
     .filter(Boolean);
 
   // Append Screen Slate venues (non-traditional spaces not covered above).
-  // Two dedup gates:
-  //   1. isSSSkipVenue() — catches known scraped-theater names/prefixes
-  //   2. exact name match against already-collected theaters
+  // Three dedup gates:
+  //   1. isSSSkipVenue() — static prefix list for known scraped venues
+  //   2. Bidirectional prefix match against actual scraped theater names
+  //   3. Exact name match as final fallback
   try {
     const existingNames = new Set(theaters.map(t => t.name.toLowerCase().trim()));
+    const scrapedNamesList = [...existingNames];
     const ssTheaters = await fetchScreenSlate(userLat, userLng);
     for (const t of ssTheaters) {
-      if (isSSSkipVenue(t.name)) continue;
-      if (existingNames.has(t.name.toLowerCase().trim())) continue;
+      const ssName = (t.name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!ssName) continue;
+      if (isSSSkipVenue(t.name)) { console.log('[screenslate] handler skipped by isSSSkipVenue:', ssName); continue; }
+      // Bidirectional: "Film Forum" matches scraped "Film Forum"; "BAM" matches scraped "BAM Rose Cinemas"
+      const nameConflict = scrapedNamesList.some(n => ssName.startsWith(n) || n.startsWith(ssName));
+      if (nameConflict) { console.log('[screenslate] handler skipped by name prefix:', ssName); continue; }
+      if (existingNames.has(ssName)) { console.log('[screenslate] handler skipped exact match:', ssName); continue; }
+      console.log('[screenslate] ADDING venue:', ssName);
       theaters.push(t);
     }
   } catch (err) {
