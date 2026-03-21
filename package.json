@@ -8,6 +8,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@vercel/speed-insights": "^2.0.0",
     "axios": "^1.6.7",
     "cheerio": "^1.2.0",
     "dotenv": "^16.4.1",
